@@ -53,14 +53,46 @@ def key_file(explicit: Path | None = None) -> Path:
     return key
 
 
+def preflight() -> None:
+    if sys.platform != "darwin":
+        raise ValueError("macOS is required for Effortlane installation")
+    if sys.version_info < (3, 11):
+        raise ValueError("Python 3.11 or newer is required for Effortlane installation")
+
+
+def existing_install(root: Path) -> bool:
+    """Check an existing installation without changing its files or settings."""
+    if not (root / "manifest.json").exists():
+        return False
+    try:
+        result = manage.doctor(root)
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+        raise ValueError(
+            "Effortlane is already installed, but its health check could not run: "
+            f"{exc}. Run ~/.local/bin/effortlane doctor for details; do not reinstall over it."
+        ) from exc
+    if result.get("ok"):
+        print("Effortlane is already installed; checks passed. No changes made.")
+        return True
+    issues = result.get("issues")
+    detail = "; ".join(str(issue) for issue in issues) if issues else "an unknown check failed"
+    raise ValueError(
+        "Effortlane is already installed, but checks failed: " + detail
+        + ". Run ~/.local/bin/effortlane doctor for details; fix the reported issue before reinstalling."
+    )
+
+
 def run(native: Path | None = None, key: Path | None = None) -> None:
-    if (manage.ROOT / "manifest.json").exists():
-        raise ValueError("Effortlane is already installed; use effortlane status")
+    if existing_install(manage.ROOT):
+        return
+    preflight()
     selected = native_binary(native)
     config = manage.CODEX_CONFIG
     if not config.is_file():
         raise ValueError("Codex config missing; run native Codex and sign in first")
     auth = config.parent / "auth.json"
+    if not auth.is_file():
+        raise ValueError("Codex authentication missing; run native Codex and sign in first")
     selected_key = key_file(key)
     catalog = manage.fetch_account_catalog(selected, auth)
     bundled = Path("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex")

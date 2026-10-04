@@ -38,12 +38,28 @@ The goal: **less subscription allowance per correctly completed task**. A cheap 
 
 You need **macOS, Python 3.11+, native Codex installed and signed in, and a TypeSafe/Jev API key**. No per-project setup or Python dependency install is required.
 
+Install with one command:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/itscloud0/effortlane/main/install.sh | sh
+```
+
+Then start the evaluation:
+
+```sh
+~/.local/bin/codex --effortlane-shadow
+```
+
+The script downloads source into a temporary directory, runs the same user-level
+installer, and cleans up. It does not install Python/Codex, change shell profiles,
+or sign you in. Existing healthy installations are checked without resetting
+settings; this command does **not** upgrade installed Effortlane source.
+[Inspect the script](install.sh) or use a reviewed checkout:
+
 ```sh
 git clone https://github.com/itscloud0/effortlane.git
 cd effortlane
 python3 bootstrap.py
-~/.local/bin/effortlane doctor
-~/.local/bin/codex --effortlane-shadow
 ```
 
 The installer asks for the decision-service key with hidden input, backs up Codex configuration, and installs under your user account. It preserves unrelated settings and native login. Follow any PATH instruction it prints to use the short commands below.

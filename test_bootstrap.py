@@ -53,6 +53,73 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "native Codex CLI missing"):
             bootstrap.native_binary(self.native)
 
+    def test_existing_healthy_install_only_runs_doctor(self):
+        root = self.base / "router"
+        root.mkdir()
+        (root / "manifest.json").write_text("{}")
+        with mock.patch.object(manage, "ROOT", root), \
+                mock.patch.object(manage, "doctor", return_value={"ok": True, "issues": []}) as doctor, \
+                mock.patch.object(bootstrap, "native_binary") as native_binary, \
+                mock.patch.object(bootstrap, "key_file") as key_file, \
+                mock.patch.object(manage, "fetch_account_catalog") as fetch, \
+                mock.patch.object(bootstrap, "prepare_codex_link") as prepare_link, \
+                mock.patch.object(manage, "install") as install, \
+                mock.patch.object(manage, "write_json") as write_json:
+            bootstrap.run(self.native, self.base / "key")
+        doctor.assert_called_once_with(root)
+        native_binary.assert_not_called()
+        key_file.assert_not_called()
+        fetch.assert_not_called()
+        prepare_link.assert_not_called()
+        install.assert_not_called()
+        write_json.assert_not_called()
+
+    def test_existing_unhealthy_install_only_runs_doctor_and_reports_action(self):
+        root = self.base / "router"
+        root.mkdir()
+        (root / "manifest.json").write_text("{}")
+        with mock.patch.object(manage, "ROOT", root), \
+                mock.patch.object(manage, "doctor", return_value={
+                    "ok": False, "issues": ["native_target missing or not executable"]
+                }) as doctor, \
+                mock.patch.object(bootstrap, "native_binary") as native_binary, \
+                mock.patch.object(bootstrap, "key_file") as key_file, \
+                mock.patch.object(manage, "fetch_account_catalog") as fetch, \
+                mock.patch.object(bootstrap, "prepare_codex_link") as prepare_link, \
+                mock.patch.object(manage, "install") as install, \
+                mock.patch.object(manage, "write_json") as write_json:
+            with self.assertRaisesRegex(ValueError, "native_target missing.*effortlane doctor"):
+                bootstrap.run(self.native, self.base / "key")
+        doctor.assert_called_once_with(root)
+        native_binary.assert_not_called()
+        key_file.assert_not_called()
+        fetch.assert_not_called()
+        prepare_link.assert_not_called()
+        install.assert_not_called()
+        write_json.assert_not_called()
+
+    def test_preflight_failure_happens_before_key_handling(self):
+        with mock.patch.object(manage, "ROOT", self.base / "uninstalled-router"), \
+                mock.patch.object(bootstrap.sys, "platform", "linux"), \
+                mock.patch.object(bootstrap, "key_file") as key_file, \
+                mock.patch.object(bootstrap, "native_binary") as native_binary:
+            with self.assertRaisesRegex(ValueError, "macOS is required"):
+                bootstrap.run(self.native, self.base / "key")
+        key_file.assert_not_called()
+        native_binary.assert_not_called()
+
+    def test_missing_auth_stops_before_key_handling(self):
+        config = self.base / "codex/config.toml"
+        config.parent.mkdir()
+        config.write_text('model = "gpt-6-sol"\n')
+        with mock.patch.object(manage, "ROOT", self.base / "uninstalled-router"), \
+                mock.patch.object(manage, "CODEX_CONFIG", config), \
+                mock.patch.object(bootstrap.sys, "platform", "darwin"), \
+                mock.patch.object(bootstrap, "key_file") as key_file:
+            with self.assertRaisesRegex(ValueError, "authentication missing"):
+                bootstrap.run(self.native, self.base / "key")
+        key_file.assert_not_called()
+
     def test_setup_uses_existing_auth_and_ends_in_auto_without_touching_desktop(self):
         root = self.base / "router"
         bin_dir = self.base / "bin"

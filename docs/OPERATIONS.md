@@ -30,6 +30,16 @@ To see what happened on one task, run `effortlane trace THREAD_UUID`. It shows t
 
 ## Install and controls
 
+The one-command download installer is documented in [Quick start](../README.md#quick-start).
+It uses the same `bootstrap.py` and existing prerequisites. A second run checks
+an existing installation without resetting settings or updating source. For a
+reviewed source version, set `EFFORTLANE_REF` on the shell running `install.sh`;
+the default is the current `main` branch. The installer neither changes shell
+profiles nor installs/login native clients. A fresh installation retains the
+existing Auto default; use the explicit Shadow launch shown in Quick start to
+evaluate first.
+
+
 Fresh macOS CLI setup (Python 3.11+, native Codex already installed and signed in):
 
 ```sh
