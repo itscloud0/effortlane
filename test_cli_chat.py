@@ -37,6 +37,8 @@ class ClientEventTests(unittest.TestCase):
 
     def test_model_validation(self):
         self.assertTrue(cli_chat.MODELS.fullmatch("jev-auto"))
+        self.assertTrue(cli_chat.MODELS.fullmatch("effortlane-auto"))
+        self.assertEqual(cli_chat.display_model("jev-shadow"), "Effortlane Shadow")
         self.assertTrue(cli_chat.MODELS.fullmatch("gpt-6-sol"))
         self.assertFalse(cli_chat.MODELS.fullmatch("bad;command"))
 
@@ -59,7 +61,7 @@ class ClientEventTests(unittest.TestCase):
               patch("sys.stdin", io.StringIO("")),
               patch("sys.stderr", io.StringIO())):
             self.assertEqual(cli_chat.run(["--model", "effortlane-shadow", "--once"], Path("/tmp")), 0)
-        self.assertEqual(constructor.call_args.args[1], "jev-shadow")
+        self.assertEqual(constructor.call_args.args[1], "effortlane-shadow")
 
     def test_last_resumes_thread_before_turn(self):
         thread = "01a0e77c-b9c3-7961-8201-79edce3ffc49"

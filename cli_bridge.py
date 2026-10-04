@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 
+from core import normalize_alias
 from rpc_adapter import Adapter, native_server_command
 from manage import cli_catalog_path
 
@@ -296,16 +297,16 @@ def fallback_args(args: list[str], model: str) -> list[str]:
         if skip:
             skip = False
             continue
-        if arg in ("-m", "--model") and index + 1 < len(args) and args[index + 1] in ("jev-auto", "jev-shadow"):
+        if arg in ("-m", "--model") and index + 1 < len(args) and normalize_alias(args[index + 1]):
             skip = True
             continue
-        if arg in ("--model=jev-auto", "--model=jev-shadow"):
+        if arg.startswith("--model=") and normalize_alias(arg.partition("=")[2]):
             continue
-        if arg.startswith("--config=model=") and arg.partition("model=")[2].strip().strip("\"'") in ("jev-auto", "jev-shadow"):
+        if arg.startswith("--config=model=") and normalize_alias(arg.partition("model=")[2].strip().strip("\"'")):
             continue
         if arg in ("-c", "--config") and index + 1 < len(args):
             name, sep, value = args[index + 1].partition("=")
-            if name == "model" and sep and value.strip().strip("\"'") in ("jev-auto", "jev-shadow"):
+            if name == "model" and sep and normalize_alias(value.strip().strip("\"'")):
                 skip = True
                 continue
         clean.append(arg)
@@ -324,8 +325,8 @@ def selected_alias(args: list[str]) -> str | None:
             value = candidate if sep and key == "model" else None
         elif arg.startswith("--config=model="):
             value = arg.partition("model=")[2]
-        if isinstance(value, str) and value.strip().strip("\"'") in ("jev-auto", "jev-shadow"):
-            return value.strip().strip("\"'")
+        if isinstance(value, str) and normalize_alias(value.strip().strip("\"'")):
+            return normalize_alias(value.strip().strip("\"'"))
     return None
 
 

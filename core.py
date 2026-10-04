@@ -27,7 +27,17 @@ ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 ROLES = ("luna", "terra", "sol", "astra")
 RANK = {role: index for index, role in enumerate(ROLES)}
 EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
-ALIASES = {"jev-auto", "jev-shadow"}
+ALIASES = {"effortlane-auto", "effortlane-shadow"}
+LEGACY_ALIASES = {"jev-auto": "effortlane-auto", "jev-shadow": "effortlane-shadow"}
+
+
+def normalize_alias(model: Any) -> str | None:
+    """Accept saved legacy IDs; emit only the public synthetic model IDs."""
+    if not isinstance(model, str):
+        return None
+    canonical = LEGACY_ALIASES.get(model, model)
+    return canonical if canonical in ALIASES else None
+
 SHADOW_POLICIES = ("baseline", "completion_v1", "completion_v2", "completion_v3", "completion_v4")
 MAX_TASK = 600
 MAX_DOSSIER = 1800
@@ -486,11 +496,12 @@ class Router:
         roles = economical_roles({role: all_roles[role] for role in configured_roles if role in all_roles},
                                  config.get("allow_dominated_roles") is True)
         native_model = payload.get("model") if isinstance(payload.get("model"), str) else ""
+        native_model = normalize_alias(native_model) or native_model
         configured_mode = config.get("mode", "off")
         mode = ("off" if configured_mode == "off" else mode_override
                 if mode_override in ("auto", "shadow", "off") else
-                "auto" if native_model == "jev-auto" else
-                "shadow" if native_model == "jev-shadow" else configured_mode)
+                "auto" if native_model == "effortlane-auto" else
+                "shadow" if native_model == "effortlane-shadow" else configured_mode)
         if mode not in ("auto", "shadow", "off"):
             mode = "off"
         policy_key = "shadow_policy" if mode == "shadow" else "auto_policy"

@@ -21,6 +21,9 @@ import tomllib
 import urllib.request
 
 
+from core import ALIASES, normalize_alias
+
+
 ROOT = Path.home() / ".local/share/jev-codex-router"
 BIN = Path.home() / ".local/bin"
 CODEX_CONFIG = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
@@ -142,7 +145,7 @@ def select_sol(catalog: dict) -> str:
 def managed_catalog(native: dict) -> dict:
     models = copy.deepcopy(native["models"])
     sol = next(x for x in models if x.get("slug") == select_sol(native))
-    for slug, name in (("jev-auto", "Effortlane Auto"), ("jev-shadow", "Effortlane Shadow")):
+    for slug, name in (("effortlane-auto", "Effortlane Auto"), ("effortlane-shadow", "Effortlane Shadow")):
         if any(x.get("slug") == slug for x in models):
             raise ValueError("native catalog already owns " + slug)
         alias = copy.deepcopy(sol)
@@ -150,12 +153,12 @@ def managed_catalog(native: dict) -> dict:
         alias["display_name"] = name
         alias["description"] = ("Effortlane chooses the execution model and reasoning effort; "
                                 "the displayed effort is not the execution effort."
-                                if slug == "jev-auto" else
+                                if slug == "effortlane-auto" else
                                 "Runs the latest available Sol at the selected effort; "
                                 "Effortlane independently proposes a model and effort.")
         # Auto ignores the visible effort; Shadow applies it to Sol only.
         advertised = [level for level in sol.get("supported_reasoning_levels", [])
-                      if isinstance(level, dict) and level.get("effort") == "medium"] if slug == "jev-auto" else [
+                      if isinstance(level, dict) and level.get("effort") == "medium"] if slug == "effortlane-auto" else [
                           level for level in sol.get("supported_reasoning_levels", [])
                           if isinstance(level, dict) and level.get("effort") in ("low", "medium", "high", "xhigh", "max", "ultra")]
         if not advertised:
@@ -176,16 +179,19 @@ def is_managed_catalog(current: dict, native: dict) -> bool:
     expected = managed_catalog(native)
     if current == expected:
         return True
-    for old_names, old_descriptions in ((True, False), (False, True), (True, True)):
-        legacy = copy.deepcopy(expected)
-        for model in legacy["models"]:
-            if model.get("slug") in ("jev-auto", "jev-shadow"):
-                if old_names:
-                    model["display_name"] = "Jev Auto" if model["slug"] == "jev-auto" else "Jev Shadow"
-                if old_descriptions:
-                    model["description"] = model["description"].replace("Effortlane", "Jev")
-        if current == legacy:
-            return True
+    for old_ids in (False, True):
+        for old_names, old_descriptions in ((False, False), (True, False), (False, True), (True, True)):
+            legacy = copy.deepcopy(expected)
+            for model in legacy["models"]:
+                if model.get("slug") in ALIASES:
+                    if old_names:
+                        model["display_name"] = "Jev Auto" if model["slug"] == "effortlane-auto" else "Jev Shadow"
+                    if old_descriptions:
+                        model["description"] = model["description"].replace("Effortlane", "Jev")
+                    if old_ids:
+                        model["slug"] = model["slug"].replace("effortlane-", "jev-", 1)
+            if current == legacy:
+                return True
     return False
 
 
@@ -492,7 +498,7 @@ def desktop_refresh_catalog(root: Path = ROOT) -> dict:
             slugs = {item.get("slug") for item in validated["models"] if isinstance(item, dict)}
         except (ValueError, TypeError, KeyError) as exc:
             raise ValueError("Desktop native Codex returned invalid refreshed metadata") from exc
-        if select_sol(native) not in slugs or "jev-shadow" not in slugs or "jev-auto" not in slugs:
+        if select_sol(native) not in slugs or "effortlane-shadow" not in slugs or "effortlane-auto" not in slugs:
             raise ValueError("Desktop native Codex did not load the refreshed models")
     if (native == current_native and managed == load_json(managed_path)):
         return {"changed": False, "sol": select_sol(native)}
@@ -876,7 +882,7 @@ def desktop_safe(root: Path = ROOT) -> dict:
     original_catalog = manifest["original_root"].get("model_catalog_json")
     if fields.get("model_catalog_json") not in (managed_catalog, original_catalog):
         raise ValueError("model_catalog_json changed outside router; refusing to overwrite")
-    alias_model = fields.get("model") in ('model = "jev-auto"\n', 'model = "jev-shadow"\n')
+    alias_model = fields.get("model") in tuple(f'model = "{alias}"\n' for alias in (*ALIASES, "jev-auto", "jev-shadow"))
     desktop = manifest.get("desktop", {})
     wrapper = Path(desktop.get("wrapper_path", root / "app-server-wrapper"))
     native = Path(manifest["native_target"])
@@ -1025,8 +1031,8 @@ def update_catalog(root: Path = ROOT) -> None:
         raise ValueError(f"native catalog cache is stale ({int(age)}s); refresh it through native Codex before update")
     native = native_catalog(cache)
     generated = managed_catalog(native)
-    old_alias = next((x for x in load_json(root / "models.json")["models"] if x.get("slug") == "jev-auto"), None)
-    new_alias = next(x for x in generated["models"] if x.get("slug") == "jev-auto")
+    old_alias = next((x for x in load_json(root / "models.json")["models"] if x.get("slug") == "effortlane-auto"), None)
+    new_alias = next(x for x in generated["models"] if x.get("slug") == "effortlane-auto")
     if manifest.get("desktop", {}).get("enabled") and old_alias != new_alias:
         raise ValueError("Desktop alias metadata changed; disable the Desktop adapter before updating catalog")
     current_native = (root / "native-models.json").read_bytes()
@@ -1120,14 +1126,15 @@ def status(root: Path = ROOT) -> dict:
     except (OSError, ValueError, KeyError):
         codex_config = {}
     default_model = codex_config.get("model")
-    if not isinstance(default_model, str) or not re.fullmatch(r"(?:jev-(?:auto|shadow)|gpt-\d+(?:\.\d+)*(?:-[a-z][a-z0-9]*)?)", default_model):
+    default_model = normalize_alias(default_model) or default_model
+    if not isinstance(default_model, str) or not re.fullmatch(r"(?:effortlane-(?:auto|shadow)|gpt-\d+(?:\.\d+)*(?:-[a-z][a-z0-9]*)?)", default_model):
         default_model = None
     default_effort = codex_config.get("model_reasoning_effort")
     if default_effort not in ("low", "medium", "high", "xhigh", "max", "ultra"):
         default_effort = None
     default_mode = ("off" if manifest["config_state"] != "enabled" or config.get("mode") == "off" else
-                    "shadow" if default_model == "jev-shadow" else
-                    "auto" if default_model == "jev-auto" else "native")
+                    "shadow" if normalize_alias(default_model) == "effortlane-shadow" else
+                    "auto" if normalize_alias(default_model) == "effortlane-auto" else "native")
     auto_roles = config.get("auto_roles")
     if not (isinstance(auto_roles, list) and "sol" in auto_roles and
             all(isinstance(role, str) and role in ("luna", "terra", "sol", "astra") for role in auto_roles)):
@@ -1196,7 +1203,7 @@ def status(root: Path = ROOT) -> dict:
                    "large_context_sol_floor_tokens": config.get("large_context_sol_floor_tokens", 48000),
                    "astra_auto_allowed": "astra" in auto_roles},
         "port": config["port"], "catalog_models": len(catalog["models"]),
-        "models": [x.get("slug") for x in catalog["models"] if x.get("slug", "").startswith("jev-")],
+        "models": [normalize_alias(x.get("slug")) for x in catalog["models"] if normalize_alias(x.get("slug"))],
         "native_binary": manifest["native_target"],
         "native_binary_executable": native_executable,
         "native_binary_issue": None if native_executable else f"native_target missing or not executable: {native_binary}",
@@ -1222,9 +1229,9 @@ def doctor(root: Path = ROOT) -> dict:
     cli_managed = load_json(cli_catalog_path(root, "models.json"))
     expected = managed_catalog(native)
     aliases = {item.get("slug"): item for item in managed.get("models", [])
-               if isinstance(item, dict) and item.get("slug") in ("jev-auto", "jev-shadow")}
+               if isinstance(item, dict) and item.get("slug") in ("effortlane-auto", "effortlane-shadow")}
     expected_aliases = {item["slug"]: item for item in expected["models"]
-                        if item.get("slug") in ("jev-auto", "jev-shadow")}
+                        if item.get("slug") in ("effortlane-auto", "effortlane-shadow")}
     native_binary = Path(manifest.get("native_target", ""))
     cli_binary = Path(manifest.get("cli_target", manifest.get("native_target", "")))
     checks = {
@@ -1232,10 +1239,10 @@ def doctor(root: Path = ROOT) -> dict:
         "cli_binary_executable": cli_binary.is_file() and os.access(cli_binary, os.X_OK),
         "cli_catalog_matches_latest_sol": {
             item.get("slug"): item for item in cli_managed.get("models", []) if isinstance(item, dict)
-            and item.get("slug") in ("jev-auto", "jev-shadow")
+            and item.get("slug") in ("effortlane-auto", "effortlane-shadow")
         } == {
             item["slug"]: item for item in managed_catalog(cli_native)["models"]
-            if item.get("slug") in ("jev-auto", "jev-shadow")
+            if item.get("slug") in ("effortlane-auto", "effortlane-shadow")
         },
         "cli_catalog_generation_valid": (
             not manifest.get("cli_catalog_generation")
@@ -1765,24 +1772,24 @@ def _cli_effort_override(argv: list[str]) -> str | None:
 
 
 def _strip_cli_alias_model(argv: list[str]) -> tuple[list[str], str | None]:
-    """Treat a requested Jev alias as a route selector, not an executor."""
+    """Treat a synthetic alias as a route selector, not an executor."""
     clean: list[str] = []
     alias = None
     index = 0
     while index < len(argv):
         arg = argv[index]
         value = argv[index + 1] if index + 1 < len(argv) else None
-        if arg in ("-m", "--model") and value in ("jev-auto", "jev-shadow"):
-            alias, index = value, index + 2
+        if arg in ("-m", "--model") and normalize_alias(value):
+            alias, index = normalize_alias(value), index + 2
             continue
-        if arg.startswith("--model=") and arg.partition("=")[2] in ("jev-auto", "jev-shadow"):
-            alias, index = arg.partition("=")[2], index + 1
+        if arg.startswith("--model=") and normalize_alias(arg.partition("=")[2]):
+            alias, index = normalize_alias(arg.partition("=")[2]), index + 1
             continue
         config_value = value if arg in ("-c", "--config") else arg.partition("--config=")[2] if arg.startswith("--config=") else None
         if config_value and config_value.startswith("model="):
             selected = config_value.partition("=")[2].strip().strip("\"'")
-            if selected in ("jev-auto", "jev-shadow"):
-                alias, index = selected, index + (2 if arg in ("-c", "--config") else 1)
+            if normalize_alias(selected):
+                alias, index = normalize_alias(selected), index + (2 if arg in ("-c", "--config") else 1)
                 continue
         clean.append(arg)
         index += 1
@@ -1793,14 +1800,19 @@ def brand_cli_args(argv: list[str]) -> list[str]:
     """Normalize public flags/model IDs without changing positional prompt text."""
     flags = {"--effortlane-auto": "--jev-auto", "--effortlane-shadow": "--jev-shadow",
              "--effortlane-off": "--jev-off"}
-    models = {"effortlane-auto": "jev-auto", "effortlane-shadow": "jev-shadow"}
     result = []
     previous = None
     for arg in argv:
         if previous in ("-m", "--model"):
-            value = models.get(arg, arg)
+            value = normalize_alias(arg) or arg
         elif arg.startswith("--model="):
-            value = "--model=" + models.get(arg[8:], arg[8:])
+            value = "--model=" + (normalize_alias(arg[8:]) or arg[8:])
+        elif previous in ("-c", "--config") or arg.startswith("--config="):
+            prefix = "--config=" if arg.startswith("--config=") else ""
+            config_arg = arg[len(prefix):]
+            key, separator, raw = config_arg.partition("=")
+            alias = normalize_alias(raw.strip().strip("\"'")) if key == "model" and separator else None
+            value = prefix + "model=" + json.dumps(alias) if alias else arg
         else:
             value = flags.get(arg, arg)
         result.append(value)
@@ -1817,16 +1829,16 @@ def cli_args(argv: list[str], root: Path = ROOT, stdin_tty: bool = True) -> list
     clean, selected_alias = _strip_cli_alias_model(
         [x for x in argv if x not in ("--jev-auto", "--jev-shadow", "--jev-off")])
     if selected_alias and mode_flag is None:
-        mode_flag = "--jev-shadow" if selected_alias == "jev-shadow" else "--jev-auto"
+        mode_flag = "--jev-shadow" if selected_alias == "effortlane-shadow" else "--jev-auto"
     command, prompt, explicit = _parse_cli(clean)
     config = load_json(root / "config.json")
     try:
         codex_config = tomllib.loads(Path(manifest["config_path"]).read_text())
     except (OSError, ValueError, KeyError):
         codex_config = {}
-    if mode_flag is None and codex_config.get("model") in ("jev-auto", "jev-shadow"):
-        mode_flag = "--jev-shadow" if codex_config["model"] == "jev-shadow" else "--jev-auto"
-    logical_alias = "jev-shadow" if mode_flag == "--jev-shadow" else "jev-auto"
+    if mode_flag is None and normalize_alias(codex_config.get("model")):
+        mode_flag = "--jev-shadow" if normalize_alias(codex_config["model"]) == "effortlane-shadow" else "--jev-auto"
+    logical_alias = "effortlane-shadow" if mode_flag == "--jev-shadow" else "effortlane-auto"
     try:
         sol = select_sol(native_catalog(cli_catalog_path(root, "native-models.json")))
     except (OSError, ValueError, KeyError):
@@ -1862,7 +1874,7 @@ def cli_args(argv: list[str], root: Path = ROOT, stdin_tty: bool = True) -> list
     if command == "exec-resume":
         return [native, *endpoint, *_cli_alias_catalog_args(root), *clean]
     from core import Router, cli_route_id
-    payload = {"model": "jev-auto", "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt[:12000]}]}]}
+    payload = {"model": "effortlane-auto", "input": [{"role": "user", "content": [{"type": "input_text", "text": prompt[:12000]}]}]}
     try:
         router = Router(config_path=root / "config.json", catalog_path=cli_catalog_path(root, "native-models.json"),
                         state_path=root / "state/leases.json", telemetry_path=root / "state/telemetry.jsonl")
@@ -1872,7 +1884,7 @@ def cli_args(argv: list[str], root: Path = ROOT, stdin_tty: bool = True) -> list
                                  native_selection=True, mode_override=requested_mode)
         model = decision["model"]
         effort = decision.get("effort")
-        if not isinstance(model, str) or not model or model.startswith("jev-"):
+        if not isinstance(model, str) or not model or normalize_alias(model):
             raise ValueError("invalid native selection")
         configured_roles = config.get("auto_roles")
         astra_allowed = (isinstance(configured_roles, list) and "sol" in configured_roles
@@ -1969,19 +1981,19 @@ def cli_bridge_args(argv: list[str], root: Path = ROOT) -> list[str] | None:
                 explicit = value.strip().strip("\"'")
         elif arg.startswith("--config=model="):
             explicit = arg.partition("model=")[2].strip().strip("\"'")
-    if explicit and explicit not in ("jev-auto", "jev-shadow"):
+    if explicit and explicit not in ("effortlane-auto", "effortlane-shadow"):
         return None
     if "--jev-shadow" in argv:
-        alias = "jev-shadow"
+        alias = "effortlane-shadow"
     elif "--jev-auto" in argv:
-        alias = "jev-auto"
-    elif explicit in ("jev-auto", "jev-shadow"):
+        alias = "effortlane-auto"
+    elif explicit in ("effortlane-auto", "effortlane-shadow"):
         alias = explicit
-    elif codex_config.get("model") in ("jev-auto", "jev-shadow"):
-        alias = codex_config["model"]
+    elif normalize_alias(codex_config.get("model")):
+        alias = normalize_alias(codex_config["model"])
     else:
-        alias = "jev-shadow" if config.get("mode") == "shadow" else "jev-auto"
-    if alias not in ("jev-auto", "jev-shadow"):
+        alias = "effortlane-shadow" if config.get("mode") == "shadow" else "effortlane-auto"
+    if alias not in ("effortlane-auto", "effortlane-shadow"):
         return None
     return [*_cli_alias_catalog_args(root), *(args if explicit else ["-m", alias, *args])]
 

@@ -22,7 +22,7 @@ try:
 except ImportError:  # Python before 3.14: compressed aliases fail closed.
     zstd = None
 
-from core import Router, cli_route_id, proxy_compatible, visible_roles
+from core import Router, cli_route_id, normalize_alias, proxy_compatible, visible_roles
 
 
 UPSTREAM_HOST = "chatgpt.com"
@@ -73,8 +73,8 @@ def _rewrite(body: bytes, router: Router, client: str, session_id: str | None) -
     if not isinstance(payload, dict):
         return body, None
     selected_model = payload.get("model")
-    alias = selected_model in ("jev-auto", "jev-shadow")
-    mode_override = "auto" if selected_model == "jev-auto" else "shadow" if selected_model == "jev-shadow" else None
+    alias = normalize_alias(selected_model)
+    mode_override = "auto" if alias == "effortlane-auto" else "shadow" if alias == "effortlane-shadow" else None
     try:
         decision = router.decide(payload, client=client, session_id=session_id,
                                  native_selection=False, mode_override=mode_override)

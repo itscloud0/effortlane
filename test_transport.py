@@ -121,6 +121,15 @@ class TransportTest(unittest.TestCase):
         self.assertEqual(len(self.router.calls), 1)
         self.assertEqual(self.router.records[0][2], "ok")
 
+    def test_both_generations_of_aliases_rewrite_to_native_models(self):
+        for model, mode in (("jev-auto", "auto"), ("effortlane-auto", "auto"),
+                            ("jev-shadow", "shadow"), ("effortlane-shadow", "shadow")):
+            body = json.dumps({"model": model, "input": []}).encode()
+            rewritten, decision = transport._rewrite(body, self.router, "cli", "legacy")
+            self.assertEqual(json.loads(rewritten)["model"], "gpt-6-sol")
+            self.assertTrue(decision['_alias'])
+            self.assertEqual(self.router.calls[-1][-1], mode)
+
     def test_alias_rewrites_only_model_effort_and_records_usage(self):
         original = {"model": "jev-auto", "reasoning": {"effort": "high", "summary": "auto"},
                     "input": [{"type": "message", "content": "test"}], "tools": [{"type": "function", "name": "run"}],

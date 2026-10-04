@@ -68,11 +68,11 @@ class AdapterTests(unittest.TestCase):
         command = ['app-server', '--listen', 'stdio://']
         safe = rpc_adapter.native_server_command(self.root, command)
         self.assertIn('model_catalog_json=' + json.dumps(str(native)), safe)
-        self.assertNotIn('model="jev-shadow"', safe)
+        self.assertNotIn('model="effortlane-shadow"', safe)
         self.assertEqual(command, ['app-server', '--listen', 'stdio://'])
         manual = rpc_adapter.native_server_command(self.root, ['-c', 'model="gpt-6-luna"', *command])
         self.assertIn('model="gpt-6-luna"', manual)
-        alias = rpc_adapter.native_server_command(self.root, ['-c', 'model="jev-shadow"', *command])
+        alias = rpc_adapter.native_server_command(self.root, ['-c', 'model="effortlane-shadow"', *command])
         self.assertIn('model="gpt-6.1-sol"', alias)
         custom = ['-c', 'profile="custom"', *command]
         self.assertEqual(rpc_adapter.native_server_command(self.root, custom), custom)
@@ -86,7 +86,7 @@ class AdapterTests(unittest.TestCase):
         raw = response(101, {'data': [native], 'nextCursor': None})
         result = json.loads(self.adapter.server(raw))['result']
         self.assertEqual(result['data'][0], native)
-        self.assertEqual([m['model'] for m in result['data'][1:]], ['jev-auto', 'jev-shadow'])
+        self.assertEqual([m['model'] for m in result['data'][1:]], ['effortlane-auto', 'effortlane-shadow'])
         self.assertEqual(result['data'][1]['displayName'], 'Effortlane Auto')
         self.assertFalse(result['data'][1]['isDefault'])
         self.assertEqual(result['data'][1]['supportedReasoningEfforts'], [{'reasoningEffort': 'medium'}])
@@ -108,7 +108,7 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.adapter.server(disabled), disabled)
 
     def test_missing_model_uses_launch_intent_and_preserves_local_images(self):
-        cli = rpc_adapter.Adapter(self.root, router=self.router, client='cli', initial_alias='jev-shadow')
+        cli = rpc_adapter.Adapter(self.root, router=self.router, client='cli', initial_alias='effortlane-shadow')
         started = json.loads(cli.client(request('thread/start', {}, 90)))
         self.assertEqual(started['params']['model'], 'gpt-6-sol')
         cli.server(response(90, {'thread': {'id': 'images'}, 'model': 'gpt-6-sol'}))
@@ -121,7 +121,7 @@ class AdapterTests(unittest.TestCase):
 
     def test_global_alias_is_adapter_intent_not_native_server_default(self):
         config = self.root / 'codex.toml'
-        config.write_text('model = "jev-shadow"\n')
+        config.write_text('model = "effortlane-shadow"\n')
         (self.root / 'manifest.json').write_text(json.dumps({'config_path': str(config)}))
         (self.root / 'config.json').write_text(json.dumps({'fallback_model': 'gpt-6.1-sol'}))
         command = ['-c', 'model_catalog_json=' + json.dumps(str(self.root / 'models.json')), 'app-server']
@@ -138,13 +138,13 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(rpc_adapter.native_server_command(self.root, custom_url), custom_url)
         profile = ['-c', 'profile="custom"', 'app-server']
         self.assertEqual(rpc_adapter.native_server_command(self.root, profile), profile)
-        config.write_text('model = "jev-shadow"\nmodel_provider = "custom"\n')
+        config.write_text('model = "effortlane-shadow"\nmodel_provider = "custom"\n')
         self.assertEqual(rpc_adapter.native_server_command(self.root, command), command)
 
     def test_config_alias_cannot_override_routed_native_model(self):
         sent = json.loads(self.adapter.client(request('turn/start', {
-            'threadId': 'config-shadow', 'model': 'jev-shadow', 'effort': 'high',
-            'config': {'model': 'jev-shadow', 'unrelated': 'preserve'},
+            'threadId': 'config-shadow', 'model': 'effortlane-shadow', 'effort': 'high',
+            'config': {'model': 'effortlane-shadow', 'unrelated': 'preserve'},
             'input': [{'type': 'text', 'text': 'test'}, {'type': 'image', 'url': 'test-only'}]})))
         self.assertEqual(sent['params']['config']['model'], sent['params']['model'])
         self.assertNotIn(sent['params']['model'], core.ALIASES)
@@ -155,9 +155,9 @@ class AdapterTests(unittest.TestCase):
         for method in ('thread/start', 'thread/resume', 'turn/start'):
             with self.subTest(method=method), mock.patch.object(self.adapter.store, 'get', side_effect=OSError('test-only')):
                 sent = json.loads(self.adapter.client(request(method, {
-                    'threadId': 'broken', 'model': 'jev-shadow', 'effort': 'high',
-                    'config': {'model': 'jev-shadow'},
-                    'collaborationMode': {'settings': {'model': 'jev-shadow', 'reasoning_effort': 'high'}},
+                    'threadId': 'broken', 'model': 'effortlane-shadow', 'effort': 'high',
+                    'config': {'model': 'effortlane-shadow'},
+                    'collaborationMode': {'settings': {'model': 'effortlane-shadow', 'reasoning_effort': 'high'}},
                     'input': [{'type': 'text', 'text': 'preserve'}]})))
                 self.assertEqual(sent['params']['model'], 'gpt-6-sol')
                 self.assertEqual(sent['params']['config']['model'], 'gpt-6-sol')
@@ -169,12 +169,12 @@ class AdapterTests(unittest.TestCase):
         cli = rpc_adapter.Adapter(self.root, router=self.router, client='cli')
         output = io.StringIO()
         with mock.patch.object(cli.store, 'get', side_effect=OSError('test-only')), redirect_stderr(output):
-            sent = json.loads(cli.client(request('turn/start', {'threadId': 'broken', 'model': 'jev-shadow'})))
+            sent = json.loads(cli.client(request('turn/start', {'threadId': 'broken', 'model': 'effortlane-shadow'})))
         self.assertEqual(sent['params']['model'], 'gpt-6-sol')
         self.assertEqual(output.getvalue(), '')
 
     def test_native_guard_preserves_concrete_manual_model(self):
-        raw = request('turn/start', {'model': 'jev-shadow', 'config': {'model': 'gpt-6-astra'}})
+        raw = request('turn/start', {'model': 'effortlane-shadow', 'config': {'model': 'gpt-6-astra'}})
         guarded = json.loads(self.adapter._native_model_guard(raw))
         self.assertEqual(guarded['params']['model'], 'gpt-6-astra')
         self.assertEqual(guarded['params']['config']['model'], 'gpt-6-astra')
@@ -182,7 +182,7 @@ class AdapterTests(unittest.TestCase):
 
     def test_auto_astra_proposal_is_clamped_but_concrete_astra_passes(self):
         self.router.model = 'gpt-6-astra'
-        routed = json.loads(self.adapter.client(request('turn/start', {'threadId': 'auto', 'model': 'jev-auto',
+        routed = json.loads(self.adapter.client(request('turn/start', {'threadId': 'auto', 'model': 'effortlane-auto',
             'input': [{'type': 'text', 'text': 'Plan an architecture change'}]})))
         self.assertEqual(routed['params']['model'], 'gpt-6-sol')
         manual = json.loads(self.adapter.client(request('turn/start', {'threadId': 'manual', 'model': 'gpt-6-astra',
@@ -192,7 +192,7 @@ class AdapterTests(unittest.TestCase):
     def test_astra_allowlist_routes_without_dialog(self):
         self.router._config = lambda: {'mode': 'auto', 'auto_roles': ['luna', 'terra', 'sol', 'astra']}
         self.router.model = 'gpt-6-astra'
-        routed = json.loads(self.adapter.client(request('turn/start', {'threadId': 'allowed', 'model': 'jev-auto',
+        routed = json.loads(self.adapter.client(request('turn/start', {'threadId': 'allowed', 'model': 'effortlane-auto',
             'input': [{'type': 'text', 'text': 'Review architecture'}]})))
         self.assertEqual(routed['params']['model'], 'gpt-6-astra')
 
@@ -200,10 +200,10 @@ class AdapterTests(unittest.TestCase):
         self.adapter.client(request('thread/start', {'model': 'gpt-6-sol'}, 1))
         self.adapter.server(response(1, {'thread': {'id': 'picker'}, 'model': 'gpt-6-sol'}))
         changed = json.loads(self.adapter.client(request('thread/settings/update',
-            {'threadId': 'picker', 'model': 'jev-auto'}, 2)))
+            {'threadId': 'picker', 'model': 'effortlane-auto'}, 2)))
         self.assertEqual(changed['params']['model'], 'gpt-6-sol')
         turn = json.loads(self.adapter.client(request('turn/start', {'threadId': 'picker',
-            'model': 'jev-auto', 'input': [{'type': 'text', 'text': 'Fix typo'}]}, 3)))
+            'model': 'effortlane-auto', 'input': [{'type': 'text', 'text': 'Fix typo'}]}, 3)))
         self.assertEqual((turn['params']['model'], turn['params']['effort']), ('gpt-6-luna', 'low'))
 
     def test_subscription_notifications_pass_through_and_deduplicate(self):
@@ -215,10 +215,10 @@ class AdapterTests(unittest.TestCase):
 
     def test_turn_metrics_do_not_capture_tool_content_or_count_steering_twice(self):
         with mock.patch.object(rpc_adapter.time, "monotonic", return_value=10):
-            self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-shadow',
+            self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-shadow',
                 'input': [{'type': 'text', 'text': 'Explain the module'}]}))
         with mock.patch.object(rpc_adapter.time, "monotonic", return_value=11):
-            self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-shadow',
+            self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-shadow',
                 'input': [{'type': 'text', 'text': 'Steering'}]}))
             raw = (json.dumps({'method': 'item/agentMessage/delta', 'params': {'threadId': 't', 'delta': 'private'}})+'\n').encode()
             self.assertEqual(self.adapter.server(raw), raw)
@@ -246,13 +246,13 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(self.router.calls)
 
     def test_start_turn_usage_and_privacy(self):
-        sent = json.loads(self.adapter.client(request('thread/start', {'model': 'jev-auto', 'cwd': '/tmp'})))
+        sent = json.loads(self.adapter.client(request('thread/start', {'model': 'effortlane-auto', 'cwd': '/tmp'})))
         self.assertEqual(sent['params'], {'model': 'gpt-6-sol', 'cwd': '/tmp'})
         returned = json.loads(self.adapter.server(response(1, {'thread': {'id': 'thread-1', 'model': 'gpt-6-sol'}, 'model': 'gpt-6-sol'})))
-        self.assertEqual(returned['result']['model'], 'jev-auto')
-        self.assertEqual(returned['result']['thread']['model'], 'jev-auto')
+        self.assertEqual(returned['result']['model'], 'effortlane-auto')
+        self.assertEqual(returned['result']['thread']['model'], 'effortlane-auto')
         input_items = [{'type': 'text', 'text': 'Fix a simple typo'}, {'type': 'image', 'data': 'secret-image'}]
-        sent = json.loads(self.adapter.client(request('turn/start', {'threadId': 'thread-1', 'model': 'jev-auto', 'input': input_items}, 2)))
+        sent = json.loads(self.adapter.client(request('turn/start', {'threadId': 'thread-1', 'model': 'effortlane-auto', 'input': input_items}, 2)))
         self.assertEqual((sent['params']['model'], sent['params']['effort']), ('gpt-6-luna', 'low'))
         self.assertEqual(sent['params']['input'], input_items)
         self.assertEqual(self.router.calls[0][1], {'client': 'desktop', 'session_id': 'thread-1', 'native_selection': True, 'mode_override': 'auto'})
@@ -268,34 +268,34 @@ class AdapterTests(unittest.TestCase):
             'threadId': 'thread-1', 'tokenUsage': {'last': {'inputTokens': 10000,
                                                           'cachedInputTokens': 2500, 'outputTokens': 100}}}}
         self.adapter.server((json.dumps(cached_usage) + '\n').encode())
-        self.adapter._route('jev-auto', {'input': [{'type': 'text', 'text': 'Fix the next typo'}]},
+        self.adapter._route('effortlane-auto', {'input': [{'type': 'text', 'text': 'Fix the next typo'}]},
                             'thread-1', self.adapter.store.get('thread-1'))
         self.assertEqual(self.router.calls[-1][0]['cached_input_pct'], 25)
         self.assertEqual(self.router.calls[-1][0]['cache_state'], 'hot')
         self.adapter.last_cache_pct['thread-1'] = (25, rpc_adapter.time.monotonic() - 601)
-        self.adapter._route('jev-auto', {'input': [{'type': 'text', 'text': 'Fix another typo'}]},
+        self.adapter._route('effortlane-auto', {'input': [{'type': 'text', 'text': 'Fix another typo'}]},
                             'thread-1', self.adapter.store.get('thread-1'))
         self.assertNotIn('cached_input_pct', self.router.calls[-1][0])
         settings = {'jsonrpc': '2.0', 'method': 'thread/settings/updated', 'params': {'threadId': 'thread-1', 'threadSettings': {'model': 'gpt-6-luna', 'effort': 'low'}}}
-        self.assertEqual(json.loads(self.adapter.server((json.dumps(settings)+'\n').encode()))['params']['threadSettings']['model'], 'jev-auto')
+        self.assertEqual(json.loads(self.adapter.server((json.dumps(settings)+'\n').encode()))['params']['threadSettings']['model'], 'effortlane-auto')
 
     def test_thread_metadata_keeps_alias_for_desktop_effort_picker(self):
-        self.adapter.store.update('t', alias='jev-auto', actual='gpt-6-sol', effort='medium')
+        self.adapter.store.update('t', alias='effortlane-auto', actual='gpt-6-sol', effort='medium')
         started = {'jsonrpc': '2.0', 'method': 'thread/started', 'params': {'thread': {'id': 't', 'model': 'gpt-6-sol'}}}
-        self.assertEqual(json.loads(self.adapter.server((json.dumps(started)+'\n').encode()))['params']['thread']['model'], 'jev-auto')
+        self.assertEqual(json.loads(self.adapter.server((json.dumps(started)+'\n').encode()))['params']['thread']['model'], 'effortlane-auto')
         self.assertEqual(self.adapter.client(request('thread/read', {'threadId': 't'}, 5)), request('thread/read', {'threadId': 't'}, 5))
         read = json.loads(self.adapter.server(response(5, {'thread': {'id': 't', 'model': 'gpt-6-sol'}})))
-        self.assertEqual(read['result']['thread']['model'], 'jev-auto')
+        self.assertEqual(read['result']['thread']['model'], 'effortlane-auto')
         self.adapter.client(request('thread/list', {'limit': 10}, 6))
         listed = json.loads(self.adapter.server(response(6, {'data': [{'id': 't', 'model': 'gpt-6-sol'},
                                                                         {'id': 'manual', 'model': 'gpt-6-astra'}]})))
-        self.assertEqual([x['model'] for x in listed['result']['data']], ['jev-auto', 'gpt-6-astra'])
+        self.assertEqual([x['model'] for x in listed['result']['data']], ['effortlane-auto', 'gpt-6-astra'])
         settings = {'jsonrpc': '2.0', 'method': 'thread/settings/updated', 'params': {
             'threadId': 't', 'threadSettings': {'model': 'gpt-6-sol', 'effort': 'high',
             'collaborationMode': {'settings': {'model': 'gpt-6-sol', 'reasoning_effort': 'high'}}}}}
         returned = json.loads(self.adapter.server((json.dumps(settings)+'\n').encode()))['params']['threadSettings']
-        self.assertEqual(returned['model'], 'jev-auto')
-        self.assertEqual(returned['collaborationMode']['settings']['model'], 'jev-auto')
+        self.assertEqual(returned['model'], 'effortlane-auto')
+        self.assertEqual(returned['collaborationMode']['settings']['model'], 'effortlane-auto')
         self.adapter.store.update('t', clear=True)
         self.adapter.client(request('thread/read', {'threadId': 't'}, 7))
         manual = json.loads(self.adapter.server(response(7, {'thread': {'id': 't', 'model': 'gpt-6-sol'}})))
@@ -307,26 +307,26 @@ class AdapterTests(unittest.TestCase):
              [{'effort': x} for x in ('low', 'medium', 'high', 'max')]},
             {'slug': 'gpt-6-sol', 'visibility': 'list', 'supported_reasoning_levels':
              [{'effort': x} for x in ('low', 'medium', 'high', 'max', 'ultra')]}]}
-        self.adapter.store.update('t', alias='jev-auto', actual='gpt-6-sol', effort='medium', effort_override='max')
+        self.adapter.store.update('t', alias='effortlane-auto', actual='gpt-6-sol', effort='medium', effort_override='max')
         changed = json.loads(self.adapter.client(request('thread/settings/update', {
-            'threadId': 't', 'model': 'jev-auto', 'effort': 'high'}, 11)))
+            'threadId': 't', 'model': 'effortlane-auto', 'effort': 'high'}, 11)))
         self.assertEqual((changed['params']['model'], changed['params']['effort']), ('gpt-6-sol', 'high'))
         self.assertNotIn('effort_override', self.adapter.store.get('t'))
-        turn = json.loads(self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-auto',
+        turn = json.loads(self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-auto',
             'input': [{'type': 'text', 'text': 'simple task'}]}, 12)))
         self.assertEqual((turn['params']['model'], turn['params']['effort']), ('gpt-6-luna', 'low'))
         self.assertNotIn('requested_effort', self.router.calls[-1][0])
         self.adapter.active.discard('t')
-        self.adapter.client(request('thread/settings/update', {'threadId': 't', 'model': 'jev-auto', 'effort': 'ultra'}, 13))
-        turn = json.loads(self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-auto',
+        self.adapter.client(request('thread/settings/update', {'threadId': 't', 'model': 'effortlane-auto', 'effort': 'ultra'}, 13))
+        turn = json.loads(self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-auto',
             'input': [{'type': 'text', 'text': 'simple task'}]}, 14)))
         self.assertEqual((turn['params']['model'], turn['params']['effort']), ('gpt-6-luna', 'low'))
         self.assertNotIn('requested_effort', self.router.calls[-1][0])
-        self.adapter.client(request('thread/settings/update', {'threadId': 't', 'model': 'jev-auto', 'effort': None}, 15))
+        self.adapter.client(request('thread/settings/update', {'threadId': 't', 'model': 'effortlane-auto', 'effort': None}, 15))
         self.assertNotIn('effort_override', self.adapter.store.get('t'))
 
     def test_initial_nondefault_effort_does_not_override_auto(self):
-        raw = request('thread/start', {'model': 'jev-auto', 'config': {'model_reasoning_effort': 'high'}}, 10)
+        raw = request('thread/start', {'model': 'effortlane-auto', 'config': {'model_reasoning_effort': 'high'}}, 10)
         self.adapter.client(raw)
         self.adapter.server(response(10, {'thread': {'id': 't', 'model': 'gpt-6-sol'},
                                           'model': 'gpt-6-sol', 'reasoningEffort': 'high'}))
@@ -346,11 +346,11 @@ class AdapterTests(unittest.TestCase):
         router = core.Router(self.root / 'config.json', self.root / 'catalog.json',
                              self.root / 'leases.json', self.root / 'telemetry.jsonl', jev)
         adapter = rpc_adapter.Adapter(self.root, router=router)
-        started = json.loads(adapter.client(request('thread/start', {'model': 'jev-shadow', 'effort': 'high'}, 30)))
+        started = json.loads(adapter.client(request('thread/start', {'model': 'effortlane-shadow', 'effort': 'high'}, 30)))
         self.assertEqual(started['params']['model'], 'gpt-6.1-sol')
         adapter.server(response(30, {'thread': {'id': 'shadow-thread'}, 'model': 'gpt-6.1-sol',
                                      'reasoningEffort': 'high'}))
-        first = json.loads(adapter.client(request('turn/start', {'threadId': 'shadow-thread', 'model': 'jev-shadow',
+        first = json.loads(adapter.client(request('turn/start', {'threadId': 'shadow-thread', 'model': 'effortlane-shadow',
             'input': [{'type': 'text', 'text': 'Rename a variable'}]}, 31)))
         self.assertEqual((first['params']['model'], first['params']['effort']), ('gpt-6.1-sol', 'high'))
         self.assertIn('effort', bodies[-1]['questions'])
@@ -360,11 +360,11 @@ class AdapterTests(unittest.TestCase):
                          ('gpt-6.1-sol', 'high', 'gpt-6-luna', 'low'))
         adapter.server((json.dumps({'method': 'turn/completed', 'params': {
             'threadId': 'shadow-thread', 'turn': {'id': 'turn-1', 'status': 'completed'}}}) + '\n').encode())
-        adapter.client(request('thread/settings/update', {'threadId': 'shadow-thread', 'model': 'jev-shadow',
+        adapter.client(request('thread/settings/update', {'threadId': 'shadow-thread', 'model': 'effortlane-shadow',
                                                          'effort': 'xhigh'}, 32))
         self.assertEqual(adapter.store.get('shadow-thread')['effort_override'], 'xhigh')
         resumed = rpc_adapter.Adapter(self.root, router=router)
-        resumed.client(request('thread/resume', {'threadId': 'shadow-thread', 'model': 'jev-shadow'}, 33))
+        resumed.client(request('thread/resume', {'threadId': 'shadow-thread', 'model': 'effortlane-shadow'}, 33))
         resumed.server(response(33, {'thread': {'id': 'shadow-thread'}, 'model': 'gpt-6.1-sol',
                                      'reasoningEffort': 'medium'}))
         second = json.loads(resumed.client(request('turn/start', {'threadId': 'shadow-thread',
@@ -374,23 +374,23 @@ class AdapterTests(unittest.TestCase):
     def test_auto_receives_last_concrete_model_for_cache_continuity(self):
         self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'gpt-6-sol',
             'effort': 'max', 'input': [{'type': 'text', 'text': 'Manual work'}]}, 20))
-        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-auto',
+        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-auto',
             'input': [{'type': 'text', 'text': 'Continue'}]}, 21))
         self.assertEqual(self.router.calls[-1][0]['current_model'], 'gpt-6-sol')
         self.assertNotIn('requested_effort', self.router.calls[-1][0])
 
     def test_manual_and_collaboration_precedence(self):
-        self.adapter.store.update('t', alias='jev-auto')
+        self.adapter.store.update('t', alias='effortlane-auto')
         raw = request('turn/start', {'threadId': 't', 'model': 'gpt-6-astra', 'input': []})
         self.assertEqual(self.adapter.client(raw), raw)
         self.assertIsNone(self.adapter.store.get('t'))
-        self.adapter.store.update('t', alias='jev-auto')
-        raw = request('turn/start', {'threadId': 't', 'model': 'jev-auto', 'collaborationMode': {'mode': 'plan', 'settings': {'model': 'gpt-6-astra', 'reasoning_effort': 'high'}}, 'input': []})
+        self.adapter.store.update('t', alias='effortlane-auto')
+        raw = request('turn/start', {'threadId': 't', 'model': 'effortlane-auto', 'collaborationMode': {'mode': 'plan', 'settings': {'model': 'gpt-6-astra', 'reasoning_effort': 'high'}}, 'input': []})
         sent = json.loads(self.adapter.client(raw))
         self.assertEqual(sent['params']['model'], 'gpt-6-astra')
         self.assertIsNone(self.adapter.store.get('t'))
-        self.adapter.store.update('t', alias='jev-auto')
-        raw = request('turn/start', {'threadId': 't', 'model': 'jev-auto', 'collaborationMode': {'mode': 'plan', 'settings': {'model': 'jev-auto', 'developerInstructions': 'keep'}}, 'input': [{'type': 'text', 'text': 'test'}]})
+        self.adapter.store.update('t', alias='effortlane-auto')
+        raw = request('turn/start', {'threadId': 't', 'model': 'effortlane-auto', 'collaborationMode': {'mode': 'plan', 'settings': {'model': 'effortlane-auto', 'developerInstructions': 'keep'}}, 'input': [{'type': 'text', 'text': 'test'}]})
         sent = json.loads(self.adapter.client(raw))
         self.assertEqual(sent['params']['collaborationMode']['settings']['model'], 'gpt-6-luna')
         self.assertEqual(sent['params']['collaborationMode']['settings']['reasoning_effort'], 'low')
@@ -415,7 +415,7 @@ class AdapterTests(unittest.TestCase):
         self.assertNotIn('private prompt', json.dumps((decision, observed)))
 
     def test_auto_route_id_links_only_its_completed_turn(self):
-        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-auto',
+        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-auto',
                                                    'input': [{'type': 'text', 'text': 'private prompt'}]}))
         route = self.router.usage_records[-1][0][0]
         self.assertEqual(len(route['route_id']), 24)
@@ -444,9 +444,9 @@ class AdapterTests(unittest.TestCase):
 
     def begin_measured_turn(self, turn, fresh=False):
         if fresh:
-            self.adapter.client(request('thread/start', {'model': 'jev-shadow'}, 80))
+            self.adapter.client(request('thread/start', {'model': 'effortlane-shadow'}, 80))
             self.adapter.server(response(80, {'thread': {'id': 't'}, 'model': 'gpt-6-sol'}))
-        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-shadow'}, 81))
+        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-shadow'}, 81))
         self.adapter.server((json.dumps({'method': 'turn/started', 'params': {
             'threadId': 't', 'turn': {'id': turn}}})+'\n').encode())
 
@@ -526,7 +526,7 @@ class AdapterTests(unittest.TestCase):
 
     def test_cli_client_routes_before_native_turn_with_cli_receipt(self):
         adapter = rpc_adapter.Adapter(self.root, router=self.router, client='cli')
-        sent = json.loads(adapter.client(request('turn/start', {'threadId': 'cli-thread', 'model': 'jev-auto',
+        sent = json.loads(adapter.client(request('turn/start', {'threadId': 'cli-thread', 'model': 'effortlane-auto',
             'input': [{'type': 'text', 'text': 'Rename a local variable'}]})))
         self.assertEqual((sent['params']['model'], sent['params']['effort']), ('gpt-6-luna', 'low'))
         self.assertEqual(self.router.calls[-1][1]['client'], 'cli')
@@ -542,12 +542,12 @@ class AdapterTests(unittest.TestCase):
         adapter = rpc_adapter.Adapter(self.root, router=self.router, client='cli')
         self.router.decide = lambda *args, **kwargs: (_ for _ in ()).throw(OSError('Jev unavailable'))
         sent = json.loads(adapter.client(request('turn/start', {'threadId': 'cli-fallback',
-            'model': 'jev-auto', 'input': [{'type': 'text', 'text': 'Fix a bug'}]})))
+            'model': 'effortlane-auto', 'input': [{'type': 'text', 'text': 'Fix a bug'}]})))
         self.assertEqual((sent['params']['model'], sent['params']['effort']), ('gpt-6-sol', 'medium'))
 
     def test_desktop_weak_quality_signals_are_counts_only(self):
-        self.adapter.store.update('t', alias='jev-auto', failed=True)
-        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-auto',
+        self.adapter.store.update('t', alias='effortlane-auto', failed=True)
+        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-auto',
                                                    'input': [{'type': 'text', 'text': 'private prompt'}]}))
         failed_command = {'jsonrpc': '2.0', 'method': 'item/completed', 'params': {'threadId': 't',
             'item': {'type': 'commandExecution', 'exitCode': 1, 'aggregatedOutput': 'private source'}}}
@@ -558,13 +558,13 @@ class AdapterTests(unittest.TestCase):
         decision = self.router.usage_records[-1][0][0]
         self.assertEqual((decision['prior_failed'], decision['command_failures']), (True, 1))
         self.assertNotIn('private', json.dumps(decision))
-        self.adapter.store.update('m', alias='jev-auto')
+        self.adapter.store.update('m', alias='effortlane-auto')
         self.adapter.client(request('turn/start', {'threadId': 'm', 'model': 'gpt-6-sol',
                                                    'input': [{'type': 'text', 'text': 'manual'}]}))
         self.adapter.server((json.dumps({**completed, 'params': {'threadId': 'm',
             'turn': {'id': 'turn-2', 'status': 'completed'}}}) + '\n').encode())
         self.assertTrue(self.router.usage_records[-1][0][0]['manual_override'])
-        self.adapter.store.update('s', alias='jev-auto')
+        self.adapter.store.update('s', alias='effortlane-auto')
         self.adapter.client(request('thread/settings/update', {'threadId': 's', 'model': 'gpt-6-sol'}))
         self.adapter.client(request('turn/start', {'threadId': 's', 'model': 'gpt-6-sol',
                                                    'input': [{'type': 'text', 'text': 'continue'}]}))
@@ -572,25 +572,47 @@ class AdapterTests(unittest.TestCase):
             'turn': {'id': 'turn-3', 'status': 'completed'}}}) + '\n').encode())
         self.assertTrue(self.router.usage_records[-1][0][0]['manual_override'])
 
+    def test_legacy_alias_input_and_saved_intent_emit_canonical_ids(self):
+        import time
+        path = self.root / 'state/desktop-intent.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({rpc_adapter._key('legacy'): {
+            'alias': 'jev-shadow', 'actual': 'gpt-6-sol', 'effort': 'high',
+            'effort_override': 'high', 'context': 1000, 'updated': time.time()}}))
+        self.assertEqual(self.adapter.store.get('legacy')['alias'], 'effortlane-shadow')
+        sent = json.loads(self.adapter.client(request('thread/resume', {
+            'threadId': 'legacy', 'model': 'jev-shadow'}, 91)))
+        self.assertEqual(sent['params']['model'], 'gpt-6-sol')
+        result = json.loads(self.adapter.server(response(91, {
+            'thread': {'id': 'legacy'}, 'model': 'gpt-6-sol'})))['result']
+        self.assertEqual(result['model'], 'effortlane-shadow')
+        self.adapter.store.update('legacy', context=1200)
+        self.assertEqual(json.loads(path.read_text())[rpc_adapter._key('legacy')]['alias'],
+                         'effortlane-shadow')
+        self.adapter.store.update('new', alias='jev-auto')
+        self.assertEqual(self.adapter.store.get('new')['alias'], 'effortlane-auto')
+        cli = rpc_adapter.Adapter(self.root, router=self.router, client='cli', initial_alias='jev-auto')
+        self.assertEqual(cli.initial_alias, 'effortlane-auto')
+
     def test_resume_persistence_unknown_context_and_fork(self):
-        self.adapter.store.update('t', alias='jev-auto', actual='gpt-6-astra', effort='high', conservative=True)
+        self.adapter.store.update('t', alias='effortlane-auto', actual='gpt-6-astra', effort='high', conservative=True)
         other = rpc_adapter.Adapter(self.root, router=self.router)
-        self.assertEqual(json.loads(other.client(request('thread/resume', {'threadId': 't', 'model': 'jev-auto'})))['params']['model'], 'gpt-6-sol')
+        self.assertEqual(json.loads(other.client(request('thread/resume', {'threadId': 't', 'model': 'effortlane-auto'})))['params']['model'], 'gpt-6-sol')
         other.server(response(1, {'thread': {'id': 't'}, 'model': 'gpt-6-astra'}))
         sent = json.loads(other.client(request('turn/start', {'threadId': 't', 'input': [{'type': 'text', 'text': 'continue'}]})))
         self.assertEqual(sent['params']['model'], 'gpt-6-sol')
-        other.store.update('unknown', alias='jev-auto')
-        unknown_resume = json.loads(other.client(request('thread/resume', {'threadId': 'unknown', 'model': 'jev-auto'}, 3)))
+        other.store.update('unknown', alias='effortlane-auto')
+        unknown_resume = json.loads(other.client(request('thread/resume', {'threadId': 'unknown', 'model': 'effortlane-auto'}, 3)))
         self.assertNotIn('model', unknown_resume['params'])
         other.server(response(3, {'thread': {'id': 'unknown'}, 'model': 'gpt-6-sol'}))
         sent = json.loads(other.client(request('turn/start', {'threadId': 'unknown', 'input': [{'type': 'text', 'text': 'continue'}]}, 4)))
         self.assertEqual(sent['params']['model'], 'gpt-6-sol')
         other.client(request('thread/fork', {'threadId': 'unknown'}, 5))
         other.server(response(5, {'thread': {'id': 'forked'}, 'model': 'gpt-6-sol'}))
-        self.assertEqual(other.store.get('forked')['alias'], 'jev-auto')
+        self.assertEqual(other.store.get('forked')['alias'], 'effortlane-auto')
 
     def test_cli_launch_alias_routes_resumed_concrete_model_and_manual_switch_wins(self):
-        cli = rpc_adapter.Adapter(self.root, router=self.router, client='cli', initial_alias='jev-auto')
+        cli = rpc_adapter.Adapter(self.root, router=self.router, client='cli', initial_alias='effortlane-auto')
         sent = json.loads(cli.client(request('thread/resume', {'threadId': 'old', 'model': 'gpt-6-sol'}, 80)))
         self.assertNotIn('model', sent['params'])
         cli.server(response(80, {'thread': {'id': 'old'}, 'model': 'gpt-6-sol', 'reasoningEffort': 'medium'}))
@@ -608,8 +630,8 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(len(self.router.calls), 1)
 
     def test_steer_failure_kill_switch_custom_provider(self):
-        self.adapter.store.update('t', alias='jev-shadow')
-        raw = request('turn/start', {'threadId': 't', 'model': 'jev-shadow', 'input': [{'type': 'text', 'text': 'hello'}]})
+        self.adapter.store.update('t', alias='effortlane-shadow')
+        raw = request('turn/start', {'threadId': 't', 'model': 'effortlane-shadow', 'input': [{'type': 'text', 'text': 'hello'}]})
         self.adapter.client(raw)
         count = len(self.router.calls)
         steer = request('turn/steer', {'threadId': 't', 'input': []}, 3)
@@ -623,16 +645,16 @@ class AdapterTests(unittest.TestCase):
         count = len(self.router.calls)
         self.adapter.client(raw)
         self.assertEqual(len(self.router.calls), count)
-        custom = request('thread/start', {'model': 'jev-auto', 'modelProvider': 'ollama'})
+        custom = request('thread/start', {'model': 'effortlane-auto', 'modelProvider': 'ollama'})
         self.assertEqual(self.adapter.client(custom), custom)
-        configured = request('thread/start', {'model': 'jev-auto', 'config': {'model': 'gpt-6-astra'}})
+        configured = request('thread/start', {'model': 'effortlane-auto', 'config': {'model': 'gpt-6-astra'}})
         self.assertEqual(json.loads(self.adapter.client(configured))['params']['model'], 'gpt-6-astra')
 
     def test_malformed_model_and_start_error_do_not_poison_active(self):
-        raw = request('turn/start', {'threadId': 't', 'model': ['jev-auto'], 'input': []})
+        raw = request('turn/start', {'threadId': 't', 'model': ['effortlane-auto'], 'input': []})
         self.assertEqual(self.adapter.client(raw), raw)
-        self.adapter.store.update('t', alias='jev-auto')
-        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-auto', 'input': []}, 2))
+        self.adapter.store.update('t', alias='effortlane-auto')
+        self.adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-auto', 'input': []}, 2))
         self.assertIn('t', self.adapter.active)
         error = b'{"jsonrpc":"2.0","id":2,"error":{"code":-1,"message":"opaque"}}\n'
         self.assertEqual(self.adapter.server(error), error)
@@ -648,8 +670,8 @@ class AdapterTests(unittest.TestCase):
                       self.root / 'state/leases.json', self.root / 'state/telemetry.jsonl',
                       jev_client=lambda *args: {'answers': {'capability': {'choice': 'luna'}, 'effort': {'choice': 'medium'}}})
         adapter = rpc_adapter.Adapter(self.root, router=real)
-        adapter.store.update('t', alias='jev-auto', failed=True)
-        sent = json.loads(adapter.client(request('turn/start', {'threadId': 't', 'model': 'jev-auto',
+        adapter.store.update('t', alias='effortlane-auto', failed=True)
+        sent = json.loads(adapter.client(request('turn/start', {'threadId': 't', 'model': 'effortlane-auto',
                                                                 'input': [{'type': 'text', 'text': 'Continue please'}]})))
         self.assertEqual(sent['params']['model'], 'gpt-6-sol')
 
@@ -670,16 +692,16 @@ else:
         adapter_path = Path(rpc_adapter.__file__)
         args = [sys.executable, str(adapter_path), '--native', str(native), '--root', str(self.root), '--']
         result = subprocess.run(args + ['app-server', '--analytics-default-enabled'],
-                                input=request('thread/start', {'model': 'jev-auto'}), capture_output=True, timeout=5)
+                                input=request('thread/start', {'model': 'effortlane-auto'}), capture_output=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         lines = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(lines[0]['result']['seenModel'], 'gpt-6-sol')
-        self.assertEqual(lines[0]['result']['model'], 'jev-auto')
+        self.assertEqual(lines[0]['result']['model'], 'effortlane-auto')
         self.assertEqual(lines[1]['method'], 'item/approval')
-        self.assertEqual(lines[2]['params']['threadSettings']['model'], 'jev-auto')
+        self.assertEqual(lines[2]['params']['threadSettings']['model'], 'effortlane-auto')
         desktop = subprocess.run(args + ['-c', 'features.code_mode_host=true', 'app-server', '--analytics-default-enabled',
                                          '-c', 'plugins.codex-app-tools@openai-bundled.mcp_servers.codex_app.enabled=true'],
-                                 input=request('thread/start', {'model': 'jev-auto'}), capture_output=True, timeout=5)
+                                 input=request('thread/start', {'model': 'effortlane-auto'}), capture_output=True, timeout=5)
         self.assertEqual(desktop.returncode, 0, desktop.stderr.decode())
         self.assertEqual(json.loads(desktop.stdout.splitlines()[0])['result']['seenModel'], 'gpt-6-sol')
         bypass = subprocess.run(args + ['exec', 'app-server'], capture_output=True, timeout=5)

@@ -16,20 +16,20 @@ class ConfigSurgeryTests(unittest.TestCase):
     def test_brand_flags_and_model_values_preserve_prompts(self):
         self.assertEqual(manage.brand_cli_args(["--effortlane-shadow", "-m", "effortlane-auto",
                                               "exec", "mention effortlane-shadow"]),
-                         ["--jev-shadow", "-m", "jev-auto", "exec", "mention effortlane-shadow"])
+                         ["--jev-shadow", "-m", "effortlane-auto", "exec", "mention effortlane-shadow"])
         self.assertEqual(manage.brand_cli_args(["--model=effortlane-shadow", "--effortlane-off"]),
-                         ["--model=jev-shadow", "--jev-off"])
+                         ["--model=effortlane-shadow", "--jev-off"])
 
-    def test_picker_brand_keeps_alias_ids_and_recognizes_only_exact_legacy(self):
+    def test_picker_brand_uses_canonical_ids_and_recognizes_only_exact_legacy(self):
         native = {"models": [{"slug": "gpt-6.1-sol", "display_name": "Sol", "visibility": "list",
                               "supported_reasoning_levels": [{"effort": "medium"}]}]}
         catalog = manage.managed_catalog(native)
-        aliases = {m["slug"]: m["display_name"] for m in catalog["models"] if m["slug"].startswith("jev-")}
-        self.assertEqual(aliases, {"jev-auto": "Effortlane Auto", "jev-shadow": "Effortlane Shadow"})
+        aliases = {m["slug"]: m["display_name"] for m in catalog["models"] if m["slug"].startswith("effortlane-")}
+        self.assertEqual(aliases, {"effortlane-auto": "Effortlane Auto", "effortlane-shadow": "Effortlane Shadow"})
         self.assertTrue(manage.is_managed_catalog(catalog, native))
         for model in catalog["models"]:
             if model["slug"] in aliases:
-                model["display_name"] = "Jev Auto" if model["slug"] == "jev-auto" else "Jev Shadow"
+                model["display_name"] = "Jev Auto" if model["slug"] == "effortlane-auto" else "Jev Shadow"
         self.assertTrue(manage.is_managed_catalog(catalog, native))
         for model in catalog["models"]:
             if model["slug"] in aliases:
@@ -38,10 +38,28 @@ class ConfigSurgeryTests(unittest.TestCase):
         catalog["models"][-1]["description"] = "user modification"
         self.assertFalse(manage.is_managed_catalog(catalog, native))
 
+    def test_legacy_model_syntax_normalizes_without_touching_prompts(self):
+        for before, after in (
+                (["-m", "jev-auto"], ["-m", "effortlane-auto"]),
+                (["--model=jev-shadow"], ["--model=effortlane-shadow"]),
+                (["-c", 'model="jev-auto"'], ["-c", 'model="effortlane-auto"']),
+                (["--config=model=jev-shadow"], ['--config=model="effortlane-shadow"'])):
+            self.assertEqual(manage.brand_cli_args([*before, "exec", "jev-auto"]),
+                             [*after, "exec", "jev-auto"])
+        native = {"models": [{"slug": "gpt-6-sol", "visibility": "list",
+                              "supported_reasoning_levels": [{"effort": "medium"}]}]}
+        legacy = manage.managed_catalog(native)
+        for item in legacy['models']:
+            if item['slug'] in manage.ALIASES:
+                item['slug'] = item['slug'].replace('effortlane-', 'jev-')
+        self.assertTrue(manage.is_managed_catalog(legacy, native))
+        legacy['models'][-1]['description'] = 'user change'
+        self.assertFalse(manage.is_managed_catalog(legacy, native))
+
     def test_round_trip_preserves_unrelated_changes(self):
         original = 'model = "gpt-6-astra"\n# comment\n[features]\nsearch = true\n'
         before = {key: manage.root_fields(original).get(key) for key in manage.MANAGED_KEYS}
-        managed = {"model": 'model = "jev-shadow"\n', "openai_base_url": 'openai_base_url = "http://127.0.0.1"\n'}
+        managed = {"model": 'model = "effortlane-shadow"\n', "openai_base_url": 'openai_base_url = "http://127.0.0.1"\n'}
         changed = manage.edit_root(original, before, managed)
         changed = changed.replace("search = true", "search = false")
         restored = manage.edit_root(changed, managed, before)
@@ -50,7 +68,7 @@ class ConfigSurgeryTests(unittest.TestCase):
     def test_conflicting_managed_value_refused(self):
         original = 'model = "gpt-6-astra"\n[features]\nsearch = true\n'
         with self.assertRaisesRegex(ValueError, "config changed at model"):
-            manage.edit_root(original, {"model": 'model = "jev-shadow"\n'}, {"model": 'model = "gpt-6-astra"\n'})
+            manage.edit_root(original, {"model": 'model = "effortlane-shadow"\n'}, {"model": 'model = "gpt-6-astra"\n'})
 
 
 class InstallTests(unittest.TestCase):
@@ -125,12 +143,12 @@ class InstallTests(unittest.TestCase):
                               "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"},
                                                              {"effort": "high"}]}]}
         aliases = {item["slug"]: item for item in manage.managed_catalog(native)["models"]
-                   if item["slug"].startswith("jev-")}
-        self.assertEqual(aliases["jev-auto"]["supported_reasoning_levels"], [{"effort": "medium"}])
-        self.assertIn("Effortlane chooses", aliases["jev-auto"]["description"])
-        self.assertEqual([level["effort"] for level in aliases["jev-shadow"]["supported_reasoning_levels"]],
+                   if item["slug"].startswith("effortlane-")}
+        self.assertEqual(aliases["effortlane-auto"]["supported_reasoning_levels"], [{"effort": "medium"}])
+        self.assertIn("Effortlane chooses", aliases["effortlane-auto"]["description"])
+        self.assertEqual([level["effort"] for level in aliases["effortlane-shadow"]["supported_reasoning_levels"]],
                          ["low", "medium", "high"])
-        self.assertEqual(aliases["jev-shadow"]["default_reasoning_level"], "medium")
+        self.assertEqual(aliases["effortlane-shadow"]["default_reasoning_level"], "medium")
 
     def test_newer_sol_catalog_refresh_uses_newer_alias_metadata(self):
         older = {"slug": "gpt-6-sol", "visibility": "list",
@@ -141,12 +159,12 @@ class InstallTests(unittest.TestCase):
         catalog = {"models": [older, newer]}
         self.assertEqual(manage.select_sol(catalog), "gpt-6.1-sol")
         aliases = {item["slug"]: item for item in manage.managed_catalog(catalog)["models"]
-                   if item["slug"].startswith("jev-")}
-        self.assertEqual(aliases["jev-auto"]["model_messages"], newer["model_messages"])
-        self.assertEqual(aliases["jev-auto"]["supported_reasoning_levels"], [{"effort": "medium"}])
-        self.assertEqual(aliases["jev-shadow"]["supported_reasoning_levels"],
+                   if item["slug"].startswith("effortlane-")}
+        self.assertEqual(aliases["effortlane-auto"]["model_messages"], newer["model_messages"])
+        self.assertEqual(aliases["effortlane-auto"]["supported_reasoning_levels"], [{"effort": "medium"}])
+        self.assertEqual(aliases["effortlane-shadow"]["supported_reasoning_levels"],
                          [{"effort": "medium"}, {"effort": "high"}])
-        self.assertEqual(aliases["jev-shadow"]["default_reasoning_level"], "medium")
+        self.assertEqual(aliases["effortlane-shadow"]["default_reasoning_level"], "medium")
 
     def test_enable_migrates_legacy_relay_url_and_preserves_manual_alias(self):
         self.install()
@@ -156,10 +174,10 @@ class InstallTests(unittest.TestCase):
         manifest["managed_root"]["openai_base_url"] = 'openai_base_url = "http://127.0.0.1:43191/old"\n'
         manage.write_json(manifest_path, manifest)
         self.config.write_text(self.config.read_text().replace('model = "gpt-6-astra"',
-                                                        'model = "jev-auto"'))
+                                                        'model = "effortlane-auto"'))
         manage.enable(self.root, start=False)
         current = self.config.read_text()
-        self.assertIn('model = "jev-auto"', current)
+        self.assertIn('model = "effortlane-auto"', current)
         self.assertNotIn('model_catalog_json = ', current)
         self.assertNotIn("openai_base_url", current)
         migrated = manage.load_json(manifest_path)
@@ -327,9 +345,9 @@ class InstallTests(unittest.TestCase):
                 record = json.loads((self.root / "state/telemetry.jsonl").read_text().splitlines()[-1])
                 self.assertEqual((record["effort"], record["proposed_effort"]), ("xhigh", "low"))
             with mock.patch.object(core.Router, "decide", return_value={"model": "gpt-6-sol", "effort": "low"}) as decide:
-                args = manage.cli_args(["exec", "-m", "jev-auto", "Fix tests"], self.root)
+                args = manage.cli_args(["exec", "-m", "effortlane-auto", "Fix tests"], self.root)
                 self.assertIn("gpt-6-sol", args)
-                self.assertNotIn("jev-auto", args)
+                self.assertNotIn("effortlane-auto", args)
                 decide.assert_called_once()
             self.assertEqual(manage.cli_args(["-m", "gpt-6-sol", "exec", "Fix"], self.root)[-4:], ["-m", "gpt-6-sol", "exec", "Fix"])
             self.assertEqual(manage.cli_args(["-c", 'model="gpt-6-sol"', "exec", "Fix"], self.root)[-4:], ["-c", 'model="gpt-6-sol"', "exec", "Fix"])
@@ -373,16 +391,16 @@ class InstallTests(unittest.TestCase):
     def test_global_shadow_alias_is_default_in_cli_and_keeps_effort(self):
         self.install()
         self.config.write_text(self.config.read_text().replace('model = "gpt-6-astra"',
-                                                        'model = "jev-shadow"\nmodel_reasoning_effort = "high"'))
+                                                        'model = "effortlane-shadow"\nmodel_reasoning_effort = "high"'))
         with mock.patch.object(manage, "health", return_value=True):
             self.assertEqual(manage.status(self.root)["codex_default"],
-                             {"model": "jev-shadow", "effort": "high", "routing": "shadow"})
+                             {"model": "effortlane-shadow", "effort": "high", "routing": "shadow"})
         import core
         decision = {"model": "gpt-6-sol", "effort": "medium", "mode": "shadow",
                     "proposed_model": "gpt-6-luna", "proposed_effort": "low"}
         with mock.patch.object(manage, "health", return_value=True), \
              mock.patch.object(core.Router, "decide", return_value=decision) as decide:
-            self.assertIn("jev-shadow", manage.cli_bridge_args([], self.root))
+            self.assertIn("effortlane-shadow", manage.cli_bridge_args([], self.root))
             args = manage.cli_args(["exec", "Reply OK"], self.root)
             self.assertEqual(decide.call_args.kwargs["mode_override"], "shadow")
             self.assertEqual(args[args.index("-m") + 1], "gpt-6-sol")
@@ -393,12 +411,23 @@ class InstallTests(unittest.TestCase):
             manual = manage.cli_args(["-m", "gpt-6-sol", "exec", "Reply OK"], self.root)
             self.assertEqual(manual[-4:], ["-m", "gpt-6-sol", "exec", "Reply OK"])
 
+    def test_legacy_cli_defaults_and_resume_use_public_aliases(self):
+        self.install()
+        self.config.write_text('model = "jev-shadow"\nmodel_reasoning_effort = "high"\n')
+        with mock.patch.object(manage, "health", return_value=True):
+            catalog_args = manage._cli_alias_catalog_args(self.root)
+            self.assertEqual(manage.cli_bridge_args(["resume", "--last"], self.root),
+                             [*catalog_args, "-m", "effortlane-shadow", "resume", "--last"])
+            self.assertEqual(manage.cli_bridge_args(["-c", 'model="jev-auto"'], self.root),
+                             [*catalog_args, "-c", 'model="effortlane-auto"'])
+            self.assertEqual(manage.status(self.root)["codex_default"]["model"], "effortlane-shadow")
+
     def test_interactive_cli_keeps_local_auto_alias_and_resume(self):
         self.install()
         with mock.patch.object(manage, "health", return_value=True):
             interactive = manage.cli_args([], self.root)
-            self.assertEqual(interactive[-2:], ["-m", "jev-auto"])
-            self.assertEqual(manage.cli_args(["exec", "-"], self.root)[-4:], ["-m", "jev-auto", "exec", "-"])
+            self.assertEqual(interactive[-2:], ["-m", "effortlane-auto"])
+            self.assertEqual(manage.cli_args(["exec", "-"], self.root)[-4:], ["-m", "effortlane-auto", "exec", "-"])
             resume = manage.cli_args(["resume", "--last"], self.root)
             self.assertEqual(resume[-2:], ["resume", "--last"])
             self.assertNotIn("-m", resume)
@@ -408,8 +437,8 @@ class InstallTests(unittest.TestCase):
         with mock.patch.object(manage, "health", return_value=True):
             args = manage.cli_args(["remote-control", "start"], self.root)
             self.assertIn('model_catalog_json=' + manage.toml_string(str(manage.cli_catalog_path(self.root, "native-models.json"))), args)
-            self.assertNotIn('jev-auto', args)
-            self.assertNotIn('jev-shadow', args)
+            self.assertNotIn('effortlane-auto', args)
+            self.assertNotIn('effortlane-shadow', args)
             self.assertEqual(args[-2:], ['remote-control', 'start'])
 
     def test_native_tui_bridge_preserves_interactive_auto_and_resume(self):
@@ -420,20 +449,20 @@ class InstallTests(unittest.TestCase):
         catalog_args = manage._cli_alias_catalog_args(self.root)
         thread = "01a0cab0-65a9-7233-8a01-9e7df612e94b"
         with mock.patch.object(manage, "health", return_value=True):
-            self.assertEqual(manage.cli_bridge_args([], self.root), [*catalog_args, "-m", "jev-auto"])
+            self.assertEqual(manage.cli_bridge_args([], self.root), [*catalog_args, "-m", "effortlane-auto"])
             self.assertEqual(manage.cli_bridge_args(["resume", thread], self.root),
-                             [*catalog_args, "-m", "jev-auto", "resume", thread])
+                             [*catalog_args, "-m", "effortlane-auto", "resume", thread])
             self.assertIsNone(manage.cli_bridge_args(["exec", "Fix tests"], self.root))
             self.assertIsNone(manage.cli_bridge_args(["-m", "gpt-6-sol"], self.root))
             self.assertIsNone(manage.cli_bridge_args(['--config=model="gpt-6-sol"'], self.root))
             self.assertEqual(manage.cli_bridge_args(["resume", "--last"], self.root),
-                             [*catalog_args, "-m", "jev-auto", "resume", "--last"])
+                             [*catalog_args, "-m", "effortlane-auto", "resume", "--last"])
             self.assertEqual(manage.cli_bridge_args(["--jev-shadow"], self.root),
-                             [*catalog_args, "-m", "jev-shadow"])
+                             [*catalog_args, "-m", "effortlane-shadow"])
             self.assertIsNone(manage.cli_bridge_args(["--remote", "ws://127.0.0.1:12"], self.root))
             self.config.write_text(self.config.read_text().replace('model = "gpt-6-astra"', 'model = "gpt-6-sol"'))
-            self.assertEqual(manage.cli_bridge_args([], self.root), [*catalog_args, "-m", "jev-auto"])
-            self.config.write_text('model = "jev-auto"\nmodel_provider = "other"\n')
+            self.assertEqual(manage.cli_bridge_args([], self.root), [*catalog_args, "-m", "effortlane-auto"])
+            self.config.write_text('model = "effortlane-auto"\nmodel_provider = "other"\n')
             self.assertIsNone(manage.cli_bridge_args([], self.root))
 
     def test_startup_failure_restores_config_and_symlink(self):
@@ -834,11 +863,11 @@ class InstallTests(unittest.TestCase):
         manifest["managed_root"]["model_catalog_json"] = owned
         manifest["desktop"] = {"opted_in": True, "enabled": False}
         manage.write_json(manifest_path, manifest)
-        self.config.write_text('model = "jev-auto"\n' + owned + '# owner text\n[features]\nsearch = true\n')
+        self.config.write_text('model = "effortlane-auto"\n' + owned + '# owner text\n[features]\nsearch = true\n')
         result = manage.desktop_safe(self.root)
         self.assertTrue(result["changed"])
         self.assertEqual((Path(result["backup"]) / "config.toml").read_text().splitlines()[0],
-                         'model = "jev-auto"')
+                         'model = "effortlane-auto"')
         self.assertIn('model = "gpt-6-sol"', self.config.read_text())
         self.assertNotIn("model_catalog_json", self.config.read_text())
         self.assertTrue((self.root / "config.json").exists())
@@ -1005,7 +1034,7 @@ class InstallTests(unittest.TestCase):
         digest = hashlib.sha256(thread_id.encode()).hexdigest()
         state = self.root / "state"
         (state / "desktop-intent.json").write_text(json.dumps({digest[:32]: {
-            "alias": "jev-auto", "actual": "gpt-6-sol", "effort_override": "high",
+            "alias": "effortlane-auto", "actual": "gpt-6-sol", "effort_override": "high",
             "private": "must not appear"}}))
         rows = [
             {"event": "route", "route_id": "a" * 24, "session": digest[:24], "model": "gpt-6-sol", "effort": "high",
@@ -1017,7 +1046,7 @@ class InstallTests(unittest.TestCase):
         ]
         (state / "telemetry.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n")
         result = manage.trace(thread_id, self.root)
-        self.assertEqual(result["selection"], {"alias": "jev-auto", "actual": "gpt-6-sol",
+        self.assertEqual(result["selection"], {"alias": "effortlane-auto", "actual": "gpt-6-sol",
                                                 "effort_override": "high"})
         self.assertEqual(result["routes"][0]["reason"], "privacy_fallback")
         self.assertEqual(result["routes"][0]["route_id"], "a" * 24)

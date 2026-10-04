@@ -18,7 +18,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from core import ALIASES, Router, visible_roles
+from core import ALIASES, Router, normalize_alias, visible_roles
 
 MAX_FRAME = 8 * 1024 * 1024
 MAX_PENDING = 1024
@@ -52,7 +52,7 @@ def _decode(raw: bytes) -> dict | None:
 
 
 def _alias(model: Any) -> str | None:
-    return model if isinstance(model, str) and model in ALIASES else None
+    return normalize_alias(model)
 
 
 def _usage_counts(value: Any) -> dict | None:
@@ -170,9 +170,9 @@ class IntentStore:
             if not isinstance(data, dict):
                 return {}
             now = time.time()
-            return {key: value for key, value in data.items()
+            return {key: {**value, "alias": normalize_alias(value.get("alias"))} for key, value in data.items()
                     if re.fullmatch(r"[a-f0-9]{32}", key) and isinstance(value, dict)
-                    and value.get("alias") in ALIASES
+                    and normalize_alias(value.get("alias"))
                     and (value.get("actual") is None or isinstance(value.get("actual"), str))
                     and (value.get("effort_override") is None or value.get("effort_override") in ("low", "medium", "high", "xhigh", "max", "ultra"))
                     and (value.get("context") is None or (isinstance(value.get("context"), int) and not isinstance(value.get("context"), bool) and 0 <= value["context"] <= 1_000_000_000))
@@ -191,6 +191,7 @@ class IntentStore:
                actual: str | None = None, effort: str | None = None,
                conservative: bool | None = None, effort_override: str | None = None,
                clear_effort_override: bool = False) -> None:
+        alias = normalize_alias(alias)
         if not isinstance(thread_id, str) or not thread_id or len(thread_id) > 1024:
             return
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -247,7 +248,7 @@ class Adapter:
                                        root / "state/leases.json", root / "state/telemetry.jsonl")
         self.store = store or IntentStore(root / "state/desktop-intent.json")
         self.client_name = client if client in ("desktop", "cli") else "desktop"
-        self.initial_alias = initial_alias if self.client_name == "cli" and initial_alias in ALIASES else None
+        self.initial_alias = normalize_alias(initial_alias) if self.client_name == "cli" else None
         self.default_alias = configured_alias(root)
         self.resume_pending: set[str] = set()
         self.pending: dict[str, dict] = {}
@@ -347,7 +348,7 @@ class Adapter:
         if saved and saved.get("failed"):
             text = "Previous turn failure. " + text
         payload = {"model": alias, "input": [{"role": "user", "content": [{"type": "input_text", "text": text}]}]}
-        if alias == "jev-shadow":
+        if alias == "effortlane-shadow":
             selected_effort = _shadow_effort(params, saved)
             if selected_effort:
                 payload["shadow_executor_effort"] = selected_effort
@@ -369,7 +370,7 @@ class Adapter:
                 payload["cache_age_s"] = int(age)
         try:
             decision = self.router.decide(payload, client=self.client_name, session_id=thread_id,
-                                          native_selection=True, mode_override="auto" if alias == "jev-auto" else "shadow")
+                                          native_selection=True, mode_override="auto" if alias == "effortlane-auto" else "shadow")
             model, effort = decision.get("model"), decision.get("effort")
             if isinstance(model, str) and re.fullmatch(r"gpt-\d+(?:\.\d+)*-[a-z0-9]+", model) and isinstance(effort, str):
                 configured_roles = self.router._config().get("auto_roles")
@@ -378,7 +379,7 @@ class Adapter:
                                  and "astra" in configured_roles)
                 if model.endswith("-astra") and not astra_allowed:
                     model, effort = self._sol(), "high"
-                if alias == "jev-auto" and saved and saved.get("conservative") and context is None:
+                if alias == "effortlane-auto" and saved and saved.get("conservative") and context is None:
                     previous = saved.get("actual")
                     if model.endswith(("-luna", "-terra")) or (isinstance(previous, str) and previous.endswith("-astra")):
                         model, effort = self._sol(), "medium"
@@ -393,7 +394,7 @@ class Adapter:
         previous = self.actual.get(thread_id)
         if not previous and saved and isinstance(saved.get("actual"), str):
             previous = (saved["actual"], saved.get("effort") or "medium")
-        fallback_effort = _shadow_effort(params, saved) if alias == "jev-shadow" else None
+        fallback_effort = _shadow_effort(params, saved) if alias == "effortlane-shadow" else None
         if previous and previous[0].endswith("-sol"):
             return previous[0], fallback_effort or "medium", None
         return self._sol(), fallback_effort or "medium", None
@@ -527,7 +528,7 @@ class Adapter:
         if not self._enabled() and alias:
             previous = self.actual.get(thread_id) if thread_id else None
             model, effort = previous or ((saved or {}).get("actual") or self._sol(), (saved or {}).get("effort") or "medium")
-            if alias == "jev-shadow":
+            if alias == "effortlane-shadow":
                 effort = _shadow_effort(params, saved) or effort
             changed = copy.deepcopy(message)
             changed["params"]["model"] = model
@@ -574,8 +575,8 @@ class Adapter:
             self.active.add(thread_id)
             self.store.update(thread_id, alias=alias, failed=False, actual=model, effort=effort,
                               conservative=False,
-                              effort_override=_shadow_effort(params, saved) if alias == "jev-shadow" else None,
-                              clear_effort_override=alias != "jev-shadow")
+                              effort_override=_shadow_effort(params, saved) if alias == "effortlane-shadow" else None,
+                              clear_effort_override=alias != "effortlane-shadow")
             if rid and len(self.pending) < MAX_PENDING:
                 self.pending[rid] = {"method": method, "thread": thread_id, "alias": alias}
             return _encode(changed)
@@ -603,13 +604,13 @@ class Adapter:
                 changed["params"]["collaborationMode"]["settings"].pop("model", None)
         if rid and len(self.pending) < MAX_PENDING:
             self.pending[rid] = {"method": method, "thread": thread_id, "alias": alias,
-                                 "shadow_effort": _shadow_effort(params, saved) if alias == "jev-shadow" else None}
+                                 "shadow_effort": _shadow_effort(params, saved) if alias == "effortlane-shadow" else None}
         if thread_id and method == "thread/settings/update":
-            requested = _shadow_effort(params, saved) if alias == "jev-shadow" else params.get("effort")
+            requested = _shadow_effort(params, saved) if alias == "effortlane-shadow" else params.get("effort")
             self.store.update(thread_id, alias=alias, actual=initial,
                               effort=requested if isinstance(requested, str) else None,
-                              effort_override=requested if alias == "jev-shadow" else None,
-                              clear_effort_override=alias != "jev-shadow")
+                              effort_override=requested if alias == "effortlane-shadow" else None,
+                              clear_effort_override=alias != "effortlane-shadow")
         return _encode(changed)
 
     def server(self, raw: bytes) -> bytes:
@@ -696,8 +697,8 @@ class Adapter:
                             "session": hashlib.sha256(thread_id.encode("utf-8", "replace")).hexdigest()[:24],
                             "turn_hash": hashlib.sha256(turn_id.encode("utf-8", "replace")).hexdigest()[:24]
                             if isinstance(turn_id, str) else "",
-                            "mode": "auto" if saved.get("alias") == "jev-auto" else
-                            "shadow" if saved.get("alias") == "jev-shadow" else "native",
+                            "mode": "auto" if saved.get("alias") == "effortlane-auto" else
+                            "shadow" if saved.get("alias") == "effortlane-shadow" else "native",
                             "reason": "concrete_model" if not saved.get("alias") else "lease"}
                 decision["route_id"] = self.turn_routes.pop(thread_id, "")
                 signals = self.turn_signals.pop(thread_id, {})
@@ -751,12 +752,12 @@ class Adapter:
             changed = copy.deepcopy(message)
             existing = {entry.get("model") for entry in data if isinstance(entry, dict)}
             position = data.index(sol) + 1
-            for slug, name in (("jev-auto", "Effortlane Auto"), ("jev-shadow", "Effortlane Shadow")):
+            for slug, name in (("effortlane-auto", "Effortlane Auto"), ("effortlane-shadow", "Effortlane Shadow")):
                 if slug in existing:
                     continue
                 alias = copy.deepcopy(sol)
                 alias.update(id=slug, model=slug, displayName=name, isDefault=False)
-                if slug == "jev-auto":
+                if slug == "effortlane-auto":
                     levels = alias.get("supportedReasoningEfforts", [])
                     advertised = [level for level in levels if isinstance(level, dict)
                                   and level.get("reasoningEffort") == "medium"] or levels[:1]
@@ -765,7 +766,7 @@ class Adapter:
                     alias["supportedReasoningEfforts"] = advertised
                     alias["defaultReasoningEffort"] = advertised[0]["reasoningEffort"]
                 alias["description"] = ("Effortlane chooses model and effort automatically."
-                                        if slug == "jev-auto" else
+                                        if slug == "effortlane-auto" else
                                         "Sol at your selected effort; independent routing proposals.")
                 changed["result"]["data"].insert(position, alias)
                 position += 1
@@ -792,8 +793,8 @@ class Adapter:
             conservative = pending["method"] == "thread/resume" and not isinstance((existing or {}).get("context"), int)
             self.store.update(new_thread, alias=alias, actual=actual,
                               effort=result.get("reasoningEffort"), conservative=conservative,
-                              effort_override=pending.get("shadow_effort") if alias == "jev-shadow" else None,
-                              clear_effort_override=alias != "jev-shadow")
+                              effort_override=pending.get("shadow_effort") if alias == "effortlane-shadow" else None,
+                              clear_effort_override=alias != "effortlane-shadow")
             if self.initial_alias and pending["method"] == "thread/resume":
                 self.resume_pending.add(new_thread)
         if alias and pending["method"] in ("thread/start", "thread/resume", "thread/fork") and isinstance(result.get("model"), str):

@@ -13,19 +13,22 @@ import sys
 import time
 
 
-MODELS = re.compile(r"(?:jev-(?:auto|shadow)|gpt-\d+(?:\.\d+)*-[a-z0-9]+)\Z")
+from core import normalize_alias
+
+
+MODELS = re.compile(r"(?:(?:effortlane|jev)-(?:auto|shadow)|gpt-\d+(?:\.\d+)*-[a-z0-9]+)\Z")
 THREADS = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 MAX_FRAME = 8 * 1024 * 1024
 
 
 def display_model(model: str) -> str:
-    return {"jev-auto": "Effortlane Auto", "jev-shadow": "Effortlane Shadow"}.get(model, model)
+    return {"effortlane-auto": "Effortlane Auto", "effortlane-shadow": "Effortlane Shadow"}.get(normalize_alias(model), model)
 
 
 class CodexClient:
     def __init__(self, root: Path, model: str, *, stdin=None, stdout=None, stderr=None):
         self.root = root
-        self.model = model
+        self.model = normalize_alias(model) or model
         self.stdin = stdin or sys.stdin
         self.stdout = stdout or sys.stdout
         self.stderr = stderr or sys.stderr
@@ -210,7 +213,7 @@ def run(argv: list[str], root: Path) -> int:
     previous = parser.add_mutually_exclusive_group()
     previous.add_argument("--resume", metavar="THREAD_UUID")
     previous.add_argument("--last", action="store_true", help="resume the most recently updated thread in this directory")
-    parser.add_argument("--model", metavar="MODEL", default="jev-auto",
+    parser.add_argument("--model", metavar="MODEL", default="effortlane-auto",
                         help="effortlane-auto, effortlane-shadow, or a concrete GPT model")
     parser.add_argument("--once", action="store_true", help="read one prompt from stdin, then exit")
     from manage import brand_cli_args
@@ -232,7 +235,7 @@ def run(argv: list[str], root: Path) -> int:
                 break
             if not args.once and prompt.startswith("/model "):
                 model = prompt.removeprefix("/model ").strip()
-                model = {"effortlane-auto": "jev-auto", "effortlane-shadow": "jev-shadow"}.get(model, model)
+                model = normalize_alias(model) or model
                 if MODELS.fullmatch(model):
                     client.model = model
                     print("model " + display_model(model), file=sys.stderr)

@@ -105,7 +105,7 @@ def observe(root: Path, event: dict, router=None) -> dict | None:
     router = router or Router(root / "config.json", root / "native-models.json",
                               root / "state/native-shadow-leases.json",
                               root / "state/native-shadow-routing.jsonl")
-    payload = {"model": "jev-shadow", "input": [{"role": "user", "content": task}]}
+    payload = {"model": "effortlane-shadow", "input": [{"role": "user", "content": task}]}
     decision = router.decide(payload, client="native_hook", session_id=identity, mode_override="shadow")
     record = {"event": "native_shadow_proposal", "schema_version": 1, "ts": int(time.time()),
               "actual_model": actual, "actual_effort": "unknown", "usage_scope": "proposal_only",

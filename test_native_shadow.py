@@ -12,6 +12,9 @@ import native_shadow
 
 class NativeShadowTests(unittest.TestCase):
     def setUp(self):
+        routed_env = mock.patch.dict(os.environ, {"EFFORTLANE_ROUTED": "0"})
+        routed_env.start()
+        self.addCleanup(routed_env.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.path = self.root / 'codex/hooks.json'
@@ -65,6 +68,7 @@ class NativeShadowTests(unittest.TestCase):
         original = dict(event)
         record = native_shadow.observe(self.root, event, router)
         payload = router.decide.call_args.args[0]
+        self.assertEqual(payload['model'], 'effortlane-shadow')
         self.assertNotIn('private-secret', json.dumps(payload))
         self.assertNotIn('/Users/private', json.dumps(payload))
         self.assertEqual(router.decide.call_args.kwargs['mode_override'], 'shadow')

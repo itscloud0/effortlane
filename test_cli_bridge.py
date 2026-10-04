@@ -38,20 +38,28 @@ class WebSocketTests(unittest.TestCase):
         self.assertEqual(launch.call_args.kwargs['stdout'], cli_bridge.subprocess.PIPE)
 
     def test_selected_alias_accepts_native_cli_model_syntaxes(self):
-        for args, expected in ((['-m', 'jev-auto'], 'jev-auto'),
-                               (['--model=jev-shadow'], 'jev-shadow'),
-                               (['-c', 'model="jev-auto"'], 'jev-auto'),
-                               (['--config=model="jev-shadow"'], 'jev-shadow'),
+        for args, expected in ((['-m', 'effortlane-auto'], 'effortlane-auto'),
+                               (['--model=effortlane-shadow'], 'effortlane-shadow'),
+                               (['-c', 'model="effortlane-auto"'], 'effortlane-auto'),
+                               (['--config=model="effortlane-shadow"'], 'effortlane-shadow'),
                                (['-m', 'gpt-6-sol'], None)):
             self.assertEqual(cli_bridge.selected_alias(args), expected)
 
     def test_bridge_failure_strips_alias_override(self):
-        self.assertEqual(cli_bridge.fallback_args(["-m", "jev-auto", "resume", "--last"], "gpt-6-sol"),
+        self.assertEqual(cli_bridge.fallback_args(["-m", "effortlane-auto", "resume", "--last"], "gpt-6-sol"),
                          ["-m", "gpt-6-sol", "resume", "--last"])
-        self.assertEqual(cli_bridge.fallback_args(["-c", 'model="jev-shadow"'], "gpt-6-sol"),
+        self.assertEqual(cli_bridge.fallback_args(["-c", 'model="effortlane-shadow"'], "gpt-6-sol"),
                          ["-m", "gpt-6-sol"])
-        self.assertEqual(cli_bridge.fallback_args(['--config=model="jev-auto"'], "gpt-6-sol"),
+        self.assertEqual(cli_bridge.fallback_args(['--config=model="effortlane-auto"'], "gpt-6-sol"),
                          ["-m", "gpt-6-sol"])
+
+    def test_legacy_aliases_normalize_and_never_reach_fallback_executor(self):
+        for legacy, canonical in (("jev-auto", "effortlane-auto"), ("jev-shadow", "effortlane-shadow")):
+            for args in (["-m", legacy], ["--model=" + legacy],
+                         ["-c", 'model="' + legacy + '"'], ['--config=model="' + legacy + '"']):
+                self.assertEqual(cli_bridge.selected_alias(args), canonical)
+                self.assertEqual(cli_bridge.fallback_args([*args, "resume", "--last"], "gpt-6-sol"),
+                                 ["-m", "gpt-6-sol", "resume", "--last"])
 
     def test_masked_text_and_fragmentation(self):
         wire = client_frame(b'{"method":', fin=False) + client_frame(b'"initialize"}', opcode=0)
@@ -137,10 +145,10 @@ class WebSocketTests(unittest.TestCase):
               patch.object(cli_bridge.subprocess, "call") as direct,
               redirect_stderr(output)):
             popen.return_value.wait.return_value = 1
-            self.assertEqual(cli_bridge.run(Path("/tmp"), Path("/native"), ["-m", "jev-auto", "resume"]), 1)
+            self.assertEqual(cli_bridge.run(Path("/tmp"), Path("/native"), ["-m", "effortlane-auto", "resume"]), 1)
         self.assertIsNone(popen.call_args.kwargs["stderr"])
         direct.assert_not_called()
-        self.assertEqual(aliases, ["jev-auto"])
+        self.assertEqual(aliases, ["effortlane-auto"])
         self.assertIn("Effortlane TUI bridge: Codex exited before authentication", output.getvalue())
         self.assertIn("last stage: starting accept thread", output.getvalue())
         self.assertNotIn("Jev", output.getvalue())
