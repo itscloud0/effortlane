@@ -32,7 +32,7 @@ The goal: **less subscription allowance per correctly completed task**. A cheap 
 | Local evidence and recovery | Inspect routes, cache counters and failures; return to native Codex |
 
 > [!IMPORTANT]
-> **Experimental. Subscription savings and quality improvements are not yet proven.** Codex CLI on macOS is implemented. Desktop is opt-in and needs compatibility checks after updates. The external decision service may have its own cost.
+> **Experimental. Subscription savings and quality improvements are not yet proven.** Codex CLI on macOS is implemented. Desktop and mobile Remote should stay native. Native Shadow uses documented hooks; the Desktop Auto adapter remains experimental and opt-in. The external decision service may have its own cost.
 
 ## Quick start
 
@@ -49,6 +49,22 @@ python3 bootstrap.py
 The installer asks for the decision-service key with hidden input, backs up Codex configuration, and installs under your user account. It preserves unrelated settings and native login. Follow any PATH instruction it prints to use the short commands below.
 
 **This example explicitly starts Shadow.** Fresh installation otherwise defaults the CLI wrapper to Auto. Existing concrete-model choices remain manual overrides.
+
+### Keep Desktop and Remote native
+
+```sh
+effortlane desktop-safe
+effortlane native-shadow enable
+```
+
+Review **Effortlane native Shadow** once in Codex `/hooks`, then restart the host app after active work finishes. The observer runs asynchronously and emits no prompt context. It records sanitized routing proposals without changing your native model or reasoning effort. CLI Auto continues through its separate app-server bridge; bridged CLI turns skip the observer to avoid duplicate decisions.
+
+```sh
+effortlane native-shadow report
+effortlane native-shadow disable
+```
+
+The documented hook supplies the active model but not reasoning effort, executor token usage, or cache counters. These observations alone **cannot establish subscription savings**. Native Desktop/Remote do not offer an Effortlane model-picker entry in this setup. Existing frontend alias selections must be replaced with a concrete native model. Hook installation does not bypass Codex trust or prove it has run. [Details](docs/NATIVE_SHADOW.md).
 
 ### Choose your mode
 

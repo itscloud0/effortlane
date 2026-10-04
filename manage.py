@@ -581,7 +581,7 @@ def install(root: Path = ROOT, config_path: Path = CODEX_CONFIG, bin_dir: Path =
         raise ValueError("TypeSafe key file missing or not owner-only")
     if agent_path.exists():
         raise ValueError("LaunchAgent already exists: " + str(agent_path))
-    for filename in ("manage.py", "core.py", "costs.py", "metrics.py", "trials.py", "transport.py", "rpc_adapter.py", "desktop_bootstrap.py", "cli_chat.py", "cli_bridge.py", "claude_shadow.py"):
+    for filename in ("manage.py", "core.py", "costs.py", "metrics.py", "trials.py", "transport.py", "rpc_adapter.py", "desktop_bootstrap.py", "cli_chat.py", "cli_bridge.py", "claude_shadow.py", "native_shadow.py"):
         if not (source_dir() / filename).exists():
             raise ValueError("missing source: " + filename)
     original_text = config_path.read_text()
@@ -597,7 +597,7 @@ def install(root: Path = ROOT, config_path: Path = CODEX_CONFIG, bin_dir: Path =
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = root / "backups" / ("config-" + timestamp + ".toml")
     atomic_write(backup, original_text.encode())
-    for filename in ("manage.py", "core.py", "costs.py", "metrics.py", "trials.py", "transport.py", "rpc_adapter.py", "desktop_bootstrap.py", "cli_chat.py", "cli_bridge.py", "claude_shadow.py"):
+    for filename in ("manage.py", "core.py", "costs.py", "metrics.py", "trials.py", "transport.py", "rpc_adapter.py", "desktop_bootstrap.py", "cli_chat.py", "cli_bridge.py", "claude_shadow.py", "native_shadow.py"):
         source = source_dir() / filename
         if not source.exists():
             raise ValueError("missing source: " + filename)
@@ -934,6 +934,9 @@ def _remove_desktop_wrapper(root: Path, manifest: dict) -> None:
 
 
 def disable(root: Path = ROOT, stop: bool = True) -> None:
+    if (root / "native-shadow-hook.json").exists():
+        from native_shadow import configure
+        configure(root, False)
     desktop_disable(root)
     manifest = load_json(root / "manifest.json")
     if manifest["config_state"] == "enabled":
@@ -2025,7 +2028,7 @@ def trial_command(args: list[str], root: Path = ROOT) -> dict:
 def main() -> None:
     argv = sys.argv[1:]
     commands = {"install", "status", "doctor", "report", "metrics", "cost", "savings", "chat", "evaluate", "trace", "route", "disable", "enable", "rollback", "update", "desktop-refresh-native", "desktop-refresh-models", "cli-set-native", "cli-refresh-models",
-                "desktop-enable", "desktop-disable", "desktop-safe", "claude", "claude-report", "trial"}
+                "desktop-enable", "desktop-disable", "desktop-safe", "native-shadow", "claude", "claude-report", "trial"}
     # Only Effortlane and its legacy command manage installation. The transparent codex link always passes native commands.
     invoked = Path(sys.argv[0]).name
     if invoked in ("effortlane", "jev-codex", "manage.py") and argv and argv[0] in commands:
@@ -2044,6 +2047,12 @@ def main() -> None:
                 desktop_enable()
             elif cmd == "desktop-disable": desktop_disable()
             elif cmd == "desktop-safe": print(json.dumps(desktop_safe(), indent=2))
+            elif cmd == "native-shadow":
+                from native_shadow import configure, report as native_report
+                if argv[1:] not in (["enable"], ["disable"], ["report"]):
+                    raise ValueError("usage: effortlane native-shadow enable|disable|report")
+                result = native_report(ROOT) if argv[1] == "report" else configure(ROOT, argv[1] == "enable")
+                print(json.dumps(result, indent=2))
             elif cmd == "desktop-refresh-native":
                 if len(argv) != 3 or argv[1] != "--native":
                     raise ValueError("usage: effortlane desktop-refresh-native --native /absolute/path/to/codex")

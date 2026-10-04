@@ -177,7 +177,8 @@ def _serve_connection(connection: socket.socket, stream, root: Path, native: Pat
         child = subprocess.Popen([str(native), *command],
                                  # Only the foreground TUI owns the terminal. Backend stderr may
                                  # contain raw command text and corrupt the input editor.
-                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 env={**os.environ, "EFFORTLANE_ROUTED": "1"})
         adapter = Adapter(root, client="cli", initial_alias=initial_alias,
                           catalog_path=cli_catalog_path(root, "native-models.json"))
         assert child.stdin is not None and child.stdout is not None
