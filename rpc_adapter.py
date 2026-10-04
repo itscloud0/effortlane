@@ -453,9 +453,14 @@ class Adapter:
 
     def _client(self, raw: bytes) -> bytes:
         message = _decode(raw)
-        if not message or not isinstance(message.get("method"), str) or not isinstance(message.get("params"), dict):
+        if not message or not isinstance(message.get("method"), str):
             return raw
-        method, params = message["method"], message["params"]
+        method, params = message["method"], message.get("params")
+        # Native clients may omit params (or send null) for a default catalog.
+        if method == "model/list" and params is None:
+            params = {}
+        if not isinstance(params, dict):
+            return raw
         if method not in ("thread/start", "thread/resume", "thread/fork", "thread/settings/update",
                           "thread/read", "thread/list", "model/list", "turn/start"):
             return raw
@@ -745,6 +750,7 @@ class Adapter:
                 return raw
             changed = copy.deepcopy(message)
             existing = {entry.get("model") for entry in data if isinstance(entry, dict)}
+            position = data.index(sol) + 1
             for slug, name in (("jev-auto", "Effortlane Auto"), ("jev-shadow", "Effortlane Shadow")):
                 if slug in existing:
                     continue
@@ -761,7 +767,8 @@ class Adapter:
                 alias["description"] = ("Effortlane chooses model and effort automatically."
                                         if slug == "jev-auto" else
                                         "Sol at your selected effort; independent routing proposals.")
-                changed["result"]["data"].append(alias)
+                changed["result"]["data"].insert(position, alias)
+                position += 1
             return _encode(changed)
         if pending["method"] in ("thread/read", "thread/list"):
             changed = copy.deepcopy(message)

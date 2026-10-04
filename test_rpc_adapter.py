@@ -98,6 +98,10 @@ class AdapterTests(unittest.TestCase):
         self.adapter.client(request('model/list', {}, 104))
         repeated = json.loads(self.adapter.server(response(104, result)))['result']
         self.assertEqual(len(repeated['data']), 3)
+        for rid, extra in ((105, {}), (106, {'params': None})):
+            self.adapter.client((json.dumps({'id': rid, 'method': 'model/list', **extra}) + '\n').encode())
+            default = json.loads(self.adapter.server(response(rid, {'data': [native], 'nextCursor': None})))
+            self.assertEqual(len(default['result']['data']), 3)
         self.router.mode = 'off'
         self.adapter.client(request('model/list', {}, 103))
         disabled = response(103, {'data': [native], 'nextCursor': None})
