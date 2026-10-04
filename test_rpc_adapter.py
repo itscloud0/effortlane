@@ -58,6 +58,51 @@ class AdapterTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_native_server_uses_concrete_catalog_even_with_native_default(self):
+        config = self.root / 'codex.toml'
+        config.write_text('model = "gpt-6.1-sol"\n')
+        (self.root / 'manifest.json').write_text(json.dumps({'config_path': str(config)}))
+        (self.root / 'config.json').write_text(json.dumps({'fallback_model': 'gpt-6.1-sol'}))
+        native = self.root / 'native-models.json'
+        native.write_text(json.dumps({'models': [{'slug': 'gpt-6.1-sol', 'visibility': 'list'}]}))
+        command = ['app-server', '--listen', 'stdio://']
+        safe = rpc_adapter.native_server_command(self.root, command)
+        self.assertIn('model_catalog_json=' + json.dumps(str(native)), safe)
+        self.assertNotIn('model="jev-shadow"', safe)
+        self.assertEqual(command, ['app-server', '--listen', 'stdio://'])
+        manual = rpc_adapter.native_server_command(self.root, ['-c', 'model="gpt-6-luna"', *command])
+        self.assertIn('model="gpt-6-luna"', manual)
+        alias = rpc_adapter.native_server_command(self.root, ['-c', 'model="jev-shadow"', *command])
+        self.assertIn('model="gpt-6.1-sol"', alias)
+        custom = ['-c', 'profile="custom"', *command]
+        self.assertEqual(rpc_adapter.native_server_command(self.root, custom), custom)
+
+    def test_model_picker_aliases_are_owned_by_adapter_not_native(self):
+        native = {'id': 'gpt-6-sol', 'model': 'gpt-6-sol', 'displayName': 'Sol',
+                  'hidden': False, 'isDefault': True, 'defaultReasoningEffort': 'medium',
+                  'supportedReasoningEfforts': [{'reasoningEffort': 'medium'}, {'reasoningEffort': 'high'}],
+                  'inputModalities': ['text', 'image']}
+        self.adapter.client(request('model/list', {}, 101))
+        raw = response(101, {'data': [native], 'nextCursor': None})
+        result = json.loads(self.adapter.server(raw))['result']
+        self.assertEqual(result['data'][0], native)
+        self.assertEqual([m['model'] for m in result['data'][1:]], ['jev-auto', 'jev-shadow'])
+        self.assertEqual(result['data'][1]['displayName'], 'Effortlane Auto')
+        self.assertFalse(result['data'][1]['isDefault'])
+        self.assertEqual(result['data'][1]['supportedReasoningEfforts'], [{'reasoningEffort': 'medium'}])
+        self.assertEqual(result['data'][2]['supportedReasoningEfforts'], native['supportedReasoningEfforts'])
+        self.assertEqual(json.loads(raw)['result']['data'], [native])
+        self.adapter.client(request('model/list', {'cursor': 'next'}, 102))
+        other = response(102, {'data': [], 'nextCursor': None})
+        self.assertEqual(self.adapter.server(other), other)
+        self.adapter.client(request('model/list', {}, 104))
+        repeated = json.loads(self.adapter.server(response(104, result)))['result']
+        self.assertEqual(len(repeated['data']), 3)
+        self.router.mode = 'off'
+        self.adapter.client(request('model/list', {}, 103))
+        disabled = response(103, {'data': [native], 'nextCursor': None})
+        self.assertEqual(self.adapter.server(disabled), disabled)
+
     def test_missing_model_uses_launch_intent_and_preserves_local_images(self):
         cli = rpc_adapter.Adapter(self.root, router=self.router, client='cli', initial_alias='jev-shadow')
         started = json.loads(cli.client(request('thread/start', {}, 90)))
@@ -75,10 +120,10 @@ class AdapterTests(unittest.TestCase):
         config.write_text('model = "jev-shadow"\n')
         (self.root / 'manifest.json').write_text(json.dumps({'config_path': str(config)}))
         (self.root / 'config.json').write_text(json.dumps({'fallback_model': 'gpt-6.1-sol'}))
-        command = ['-c', 'model_catalog_json="/tmp/catalog"', 'app-server']
+        command = ['-c', 'model_catalog_json=' + json.dumps(str(self.root / 'models.json')), 'app-server']
         safe = rpc_adapter.native_server_command(self.root, command)
         self.assertEqual(safe[-3:], ['-c', 'model="gpt-6.1-sol"', 'app-server'])
-        self.assertEqual(command, ['-c', 'model_catalog_json="/tmp/catalog"', 'app-server'])
+        self.assertEqual(command, ['-c', 'model_catalog_json=' + json.dumps(str(self.root / 'models.json')), 'app-server'])
         adapter = rpc_adapter.Adapter(self.root, router=self.router)
         self.assertEqual(json.loads(adapter.client(request('thread/start', {})))['params']['model'], 'gpt-6-sol')
         concrete = ['-c', 'model="gpt-6-luna"', 'app-server']

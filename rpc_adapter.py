@@ -115,9 +115,9 @@ def configured_alias(root: Path) -> str | None:
 
 def native_server_command(root: Path, command: list[str], catalog_path: Path | None = None) -> list[str]:
     """Keep native defaults concrete; synthetic mode lives in the RPC adapter."""
-    if not configured_alias(root):
-        return command
     index = 0
+    manual_model = False
+    launch_alias = False
     while index < len(command) and command[index] in ("-c", "--config"):
         if index + 1 >= len(command):
             return command
@@ -126,13 +126,34 @@ def native_server_command(root: Path, command: list[str], catalog_path: Path | N
         if key == "profile" or (key == "model_provider" and value != "openai") or (
                 key == "openai_base_url" and value != "https://chatgpt.com/backend-api/codex"):
             return command
-        if key == "model" and not _alias(value):
+        if key == "model_catalog_json" and not Path(value).is_relative_to(root):
             return command
+        if key == "model":
+            launch_alias = bool(_alias(value))
+            manual_model = not launch_alias
         index += 2
     if index >= len(command) or command[index] != "app-server":
         return command
-    sol = Adapter(root, catalog_path=catalog_path)._sol()
-    return [*command[:index], "-c", "model=" + json.dumps(sol), *command[index:]]
+    try:
+        manifest = json.loads((root / "manifest.json").read_text())
+        config = tomllib.loads(Path(manifest["config_path"]).read_text())
+        if (config.get("profile") or config.get("model_provider", "openai") != "openai"
+                or config.get("openai_base_url") not in (None, "https://chatgpt.com/backend-api/codex")):
+            return command
+        catalog = config.get("model_catalog_json")
+        if catalog and not Path(catalog).is_relative_to(root):
+            return command
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    overrides = []
+    native_catalog = catalog_path or root / "native-models.json"
+    if native_catalog.is_file():
+        # Remote clients can bypass stdio. Never advertise adapter-only models
+        # from the actual executor; inject them only in local model/list replies.
+        overrides += ["-c", "model_catalog_json=" + json.dumps(str(native_catalog))]
+    if (configured_alias(root) or launch_alias) and not manual_model:
+        overrides += ["-c", "model=" + json.dumps(Adapter(root, catalog_path=catalog_path)._sol())]
+    return [*command[:index], *overrides, *command[index:]]
 
 
 class IntentStore:
@@ -436,9 +457,9 @@ class Adapter:
             return raw
         method, params = message["method"], message["params"]
         if method not in ("thread/start", "thread/resume", "thread/fork", "thread/settings/update",
-                          "thread/read", "thread/list", "turn/start"):
+                          "thread/read", "thread/list", "model/list", "turn/start"):
             return raw
-        if method in ("thread/read", "thread/list"):
+        if method in ("thread/read", "thread/list", "model/list"):
             rid = _request_id(message)
             if rid and len(self.pending) < MAX_PENDING:
                 self.pending[rid] = {"method": method, "thread": None, "alias": None}
@@ -714,6 +735,34 @@ class Adapter:
         if not pending or "result" not in message or not isinstance(message["result"], dict):
             return raw
         result = message["result"]
+        if pending["method"] == "model/list":
+            data = result.get("data")
+            if not self._enabled() or not isinstance(data, list):
+                return raw
+            sol = next((entry for entry in data if isinstance(entry, dict)
+                        and entry.get("model") == self._sol() and not entry.get("hidden")), None)
+            if sol is None:
+                return raw
+            changed = copy.deepcopy(message)
+            existing = {entry.get("model") for entry in data if isinstance(entry, dict)}
+            for slug, name in (("jev-auto", "Effortlane Auto"), ("jev-shadow", "Effortlane Shadow")):
+                if slug in existing:
+                    continue
+                alias = copy.deepcopy(sol)
+                alias.update(id=slug, model=slug, displayName=name, isDefault=False)
+                if slug == "jev-auto":
+                    levels = alias.get("supportedReasoningEfforts", [])
+                    advertised = [level for level in levels if isinstance(level, dict)
+                                  and level.get("reasoningEffort") == "medium"] or levels[:1]
+                    if not advertised:
+                        continue
+                    alias["supportedReasoningEfforts"] = advertised
+                    alias["defaultReasoningEffort"] = advertised[0]["reasoningEffort"]
+                alias["description"] = ("Effortlane chooses model and effort automatically."
+                                        if slug == "jev-auto" else
+                                        "Sol at your selected effort; independent routing proposals.")
+                changed["result"]["data"].append(alias)
+            return _encode(changed)
         if pending["method"] in ("thread/read", "thread/list"):
             changed = copy.deepcopy(message)
             updated = False

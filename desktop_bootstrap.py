@@ -16,6 +16,7 @@ def run(native: Path, root: Path, command: list[str]) -> int:
     if not native.is_absolute() or not native.is_file() or not os.access(native, os.X_OK):
         print(f"Effortlane Desktop: native Codex missing or not executable: {native}", file=sys.stderr)
         return 127
+    command = native_server_command(root, command)
     listen = next((command[i + 1] for i, arg in enumerate(command[:-1]) if arg == "--listen"), None)
     listen = next((arg.split("=", 1)[1] for arg in command if arg.startswith("--listen=")), listen)
     subcommand = 0
@@ -25,7 +26,6 @@ def run(native: Path, root: Path, command: list[str]) -> int:
             or listen not in (None, "stdio://") or "--listen-tcp" in command):
         os.execv(str(native), [str(native), *command])
 
-    command = native_server_command(root, command)
     native_input, adapter_output = os.pipe()
     adapter_input, native_output = os.pipe()
     # macOS may abort a Python child between fork and exec when Objective-C

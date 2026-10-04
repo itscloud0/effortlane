@@ -172,7 +172,7 @@ def _serve_connection(connection: socket.socket, stream, root: Path, native: Pat
     _debug("connected")
     with connection, stream:
         command = native_server_command(root,
-                    ["-c", "model_catalog_json=" + json.dumps(str(cli_catalog_path(root, "models.json"))),
+                    ["-c", "model_catalog_json=" + json.dumps(str(cli_catalog_path(root, "native-models.json"))),
                      "app-server", "--listen", "stdio://"], cli_catalog_path(root, "native-models.json"))
         child = subprocess.Popen([str(native), *command],
                                  # Only the foreground TUI owns the terminal. Backend stderr may

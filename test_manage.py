@@ -403,6 +403,15 @@ class InstallTests(unittest.TestCase):
             self.assertEqual(resume[-2:], ["resume", "--last"])
             self.assertNotIn("-m", resume)
 
+    def test_remote_control_uses_native_catalog_without_routing_alias(self):
+        self.install()
+        with mock.patch.object(manage, "health", return_value=True):
+            args = manage.cli_args(["remote-control", "start"], self.root)
+            self.assertIn('model_catalog_json=' + manage.toml_string(str(manage.cli_catalog_path(self.root, "native-models.json"))), args)
+            self.assertNotIn('jev-auto', args)
+            self.assertNotIn('jev-shadow', args)
+            self.assertEqual(args[-2:], ['remote-control', 'start'])
+
     def test_native_tui_bridge_preserves_interactive_auto_and_resume(self):
         self.install()
         router_config = manage.load_json(self.root / "config.json")

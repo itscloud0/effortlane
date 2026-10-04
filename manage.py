@@ -1836,6 +1836,11 @@ def cli_args(argv: list[str], root: Path = ROOT, stdin_tty: bool = True) -> list
     healthy = health(root) if enabled else False
     endpoint = _cli_endpoint_args(root, config) if enabled and healthy and command != "passthrough" else []
     if command == "passthrough":
+        # Mobile Remote bypasses our RPC adapter. Give its native daemon a
+        # concrete catalog, even while local pickers advertise Effortlane.
+        if "remote-control" in clean and enabled:
+            concrete = [] if explicit else ["-m", sol]
+            return [native, *_cli_native_catalog_args(root), *concrete, *clean]
         return [native if healthy else bypass, *clean]
     if explicit:
         return [native if healthy else bypass, *endpoint, *clean]
