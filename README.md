@@ -132,6 +132,8 @@ Coding execution stays on native Codex with your existing ChatGPT login. Effortl
 
 ### Does Shadow save subscription allowance?
 
+Changing effort can also affect cache reuse; see the [native Codex cache/effort audit](docs/CACHE_EFFORT_AUDIT.md), including its restart/resume limitation.
+
 Shadow does not apply its model or effort proposals. It helps identify candidate policies to test. An API-price counterfactual or lower-effort recommendation cannot establish Pro allowance savings. Compare accepted tasks, usage coverage, elapsed time and rework using the [evaluation protocol](docs/EVALUATION.md).
 
 ### Can I control expensive models and reasoning effort?
