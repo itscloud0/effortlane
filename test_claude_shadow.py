@@ -93,7 +93,8 @@ class ClaudeShadowTest(unittest.TestCase):
         result = claude_shadow.hook(self.root, io.StringIO(json.dumps({"hook_event_name": "SessionStart", "prompt": "Please implement this change"})), client)
         self.assertEqual(result, 0)
         self.assertFalse(client.called)
-        self.assertEqual(self.rows(), [])
+        self.assertEqual(self.rows()[0]["event"], "claude_native_event")
+        self.assertEqual(self.rows()[0]["hook_event"], "SessionStart")
 
     def test_hook_process_wall_deadline_exits_silently(self):
         program = (
@@ -132,14 +133,14 @@ class ClaudeShadowTest(unittest.TestCase):
         fake = self.root / "claude"
         fake.write_text("")
         with mock.patch("claude_shadow.shutil.which", return_value=str(fake)), mock.patch("claude_shadow.subprocess.run") as run:
-            run.return_value.returncode = 7
+            run.side_effect = [subprocess.CompletedProcess([], 0, "2.1.251 (Claude Code)", ""), subprocess.CompletedProcess([], 7)]
             self.assertEqual(claude_shadow.launch(["--model", "sonnet", "--resume", "abc"], self.root), 7)
             self.assertEqual(run.call_args.args[0][-4:], ["--model", "sonnet", "--resume", "abc"])
         for option in ("-p", "-pjson", "--print", "--print=json"):
             with self.assertRaisesRegex(ValueError, "print"):
                 claude_shadow.launch([option], self.root)
         with mock.patch("claude_shadow.shutil.which", return_value=str(fake)), mock.patch("claude_shadow.subprocess.run") as run:
-            run.return_value.returncode = 0
+            run.side_effect = [subprocess.CompletedProcess([], 0, "2.1.251 (Claude Code)", ""), subprocess.CompletedProcess([], 0)]
             claude_shadow.launch(["--", "-p"], self.root)
             self.assertEqual(run.call_args.args[0][-2:], ["--", "-p"])
         with self.assertRaisesRegex(ValueError, "settings"):
@@ -150,6 +151,7 @@ class ClaudeShadowTest(unittest.TestCase):
         capture = self.root / 'captured.json'
         fake.write_text('#!' + sys.executable + '\n'
                         'import json,pathlib,sys\n'
+                        'if sys.argv[1:] == ["--version"]: print("2.1.251 (Claude Code)"); raise SystemExit(0)\n'
                         'pathlib.Path(' + repr(str(capture)) + ').write_text(json.dumps(sys.argv[1:]))\n'
                         'raise SystemExit(7)\n')
         fake.chmod(0o700)
@@ -158,6 +160,54 @@ class ClaudeShadowTest(unittest.TestCase):
         self.assertEqual(result, 7)
         self.assertEqual(json.loads(capture.read_text()), ['--settings', str(self.root / claude_shadow.SETTINGS_NAME),
                                                          '--model','sonnet','--resume','test-resume'])
+
+    def test_old_or_unrecognized_client_version_refused_before_settings_write(self):
+        for response in ("2.1.250 (Claude Code)", "unknown"):
+            with mock.patch("claude_shadow.shutil.which", return_value="claude"), mock.patch(
+                    "claude_shadow.subprocess.run", return_value=subprocess.CompletedProcess([], 0, response, "")):
+                with self.assertRaisesRegex(ValueError, "2.1.251"):
+                    claude_shadow.launch([], self.root)
+            self.assertFalse((self.root / claude_shadow.SETTINGS_NAME).exists())
+
+    def test_native_metadata_is_silent_private_and_never_calls_jev(self):
+        events = [
+            {"hook_event_name": "SessionStart", "model": "claude-sonnet-5", "source": "resume"},
+            {"hook_event_name": "PostModelSwitch", "from_model": "claude-sonnet-5", "to_model": "claude-opus-5",
+             "source": "picker", "context_tokens": 150000, "prompt_cache_warm": True,
+             "cache_ttl": "5m", "estimated_cache_write_usd": 2.5},
+            {"hook_event_name": "Stop", "effort": {"level": "high"}},
+            {"hook_event_name": "StopFailure", "error": "rate_limit"},
+        ]
+        client = mock.Mock(side_effect=AssertionError("must not route lifecycle"))
+        for event in events:
+            event.update(session_id="private-session", prompt_id="private-prompt", transcript_path="/private/source.jsonl",
+                         last_assistant_message="private output", error_details="secret detail")
+            with mock.patch("claude_shadow._load_config", side_effect=AssertionError("no key access")):
+                self.assertEqual(claude_shadow.hook(self.root, io.StringIO(json.dumps(event)), client), 0)
+        self.assertFalse(client.called)
+        raw = json.dumps(self.rows())
+        for value in ("private-session", "private-prompt", "/private/source.jsonl", "private output", "secret detail"):
+            self.assertNotIn(value, raw)
+        report = claude_shadow.report(self.root)
+        self.assertEqual(report["events"], 0)
+        observed = report["native_observations"]
+        self.assertEqual(observed["failures"], {"rate_limit": 1})
+        self.assertEqual(observed["effort_observations"], {"high": 1})
+        self.assertEqual(len({row["prompt_hash"] for row in self.rows()}), 1)
+        self.assertEqual(observed["warm_cache_switches"], 1)
+        self.assertEqual(observed["estimated_cache_write_usd"], 2.5)
+        self.assertEqual(observed["model_observations"], {"claude-sonnet-5": 1, "claude-opus-5": 1})
+        settings = json.loads(claude_shadow.settings_content(self.root))
+        self.assertNotIn("PreModelSwitch", settings["hooks"])
+        self.assertEqual(set(settings["hooks"]), claude_shadow.NATIVE_EVENTS | {"UserPromptSubmit"})
+
+    def test_native_metadata_rejects_untrusted_fields(self):
+        event = {"hook_event_name": "PostModelSwitch", "to_model": "private-repo/API_KEY", "source": "secret",
+                 "context_tokens": True, "prompt_cache_warm": "true", "estimated_cache_write_usd": float("nan")}
+        claude_shadow.native_event(self.root, event)
+        self.assertEqual(set(self.rows()[0]), {"schema_version", "event", "hook_event", "ts"})
+        claude_shadow.native_event(self.root, {"hook_event_name": "StopFailure", "error": ["private"]})
+        self.assertEqual(self.rows()[1]["error"], "unknown")
 
     def test_report_rejects_unbounded_values_and_does_not_reflect_private_strings(self):
         state = self.root / 'state'

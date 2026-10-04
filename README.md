@@ -121,7 +121,7 @@ If the decision service is unavailable or the dossier lacks safe signal, Effortl
 |---|---|
 | Codex interactive CLI, `exec`, resume · macOS | Implemented; validate against your installed Codex release |
 | Codex Desktop · macOS | Experimental opt-in adapter; uses an undocumented app override |
-| Claude Code · macOS | [Experimental Shadow hooks](docs/CLAUDE_CODE.md); proposals only, live validation pending |
+| Claude Code · macOS | [Experimental Shadow hooks](docs/CLAUDE_CODE.md); proposals and native lifecycle metadata; live validation pending |
 | Windows / Linux | Not supported by the installer |
 
 ## Common questions

@@ -38,6 +38,12 @@ SETTINGS_NAME = "claude-shadow-settings.json"
 SETTINGS_HASH_NAME = "claude-shadow-settings.sha256"
 OUTCOMES = frozenset(("ok", "invalid", "timeout", "error", "privacy_filtered", "no_candidates", "missing_key_config"))
 HOOK_WALL_SECONDS = 3.0
+NATIVE_EVENTS = frozenset(("SessionStart", "PostModelSwitch", "Stop", "StopFailure"))
+FAILURE_TYPES = frozenset(("rate_limit", "overloaded", "authentication_failed", "oauth_org_not_allowed",
+                           "account_on_hold", "billing_error", "invalid_request", "model_not_found",
+                           "server_error", "max_output_tokens", "cloud_credential_error", "unknown"))
+MODEL_ID = re.compile(r"(?:haiku|sonnet|opus|claude-(?:haiku|sonnet|opus)-[a-z0-9.-]{1,80})\Z")
+MIN_CLAUDE_VERSION = (2, 1, 251)
 PASTED_CONTENT_MARKER = re.compile(r"<\s*/?\s*pasted_content\b", re.IGNORECASE)
 
 
@@ -131,6 +137,9 @@ def _status(root: Path, outcome: str, event: dict[str, Any]) -> None:
     session_hash = _session_hash(event.get("session_id"))
     if session_hash:
         record["session_hash"] = session_hash
+    prompt_id = event.get("prompt_id")
+    if isinstance(prompt_id, str) and 0 < len(prompt_id) <= 512:
+        record["prompt_hash"] = hashlib.sha256(("claude-prompt:" + prompt_id).encode()).hexdigest()[:24]
     _record(root, record)
 
 
@@ -193,7 +202,52 @@ def shadow(root: Path, event: dict[str, Any], jev_client: Callable[[dict, float,
     session_hash = _session_hash(event.get("session_id"))
     if session_hash:
         record["session_hash"] = session_hash
+    prompt_id = event.get("prompt_id")
+    if isinstance(prompt_id, str) and 0 < len(prompt_id) <= 512:
+        record["prompt_hash"] = hashlib.sha256(("claude-prompt:" + prompt_id).encode()).hexdigest()[:24]
     record.update(usage)
+    _record(root, record)
+
+
+def native_event(root: Path, event: dict[str, Any]) -> None:
+    """Allowlisted native metadata only; never inspect transcripts or output text."""
+    name = event.get("hook_event_name")
+    if name not in NATIVE_EVENTS:
+        return
+    record: dict[str, Any] = {"schema_version": 1, "event": "claude_native_event",
+                              "hook_event": name, "ts": int(time.time())}
+    session_hash = _session_hash(event.get("session_id"))
+    if session_hash:
+        record["session_hash"] = session_hash
+    prompt_id = event.get("prompt_id")
+    if isinstance(prompt_id, str) and 0 < len(prompt_id) <= 512:
+        record["prompt_hash"] = hashlib.sha256(("claude-prompt:" + prompt_id).encode()).hexdigest()[:24]
+    effort = event.get("effort")
+    if isinstance(effort, dict) and effort.get("level") in ("low", "medium", "high", "xhigh", "max"):
+        record["actual_effort"] = effort["level"]
+    model_fields = (("model", "actual_model"),) if name == "SessionStart" else (
+        (("from_model", "from_model"), ("to_model", "actual_model")) if name == "PostModelSwitch" else ())
+    for source, target in model_fields:
+        value = event.get(source)
+        if isinstance(value, str) and MODEL_ID.fullmatch(value):
+            record[target] = value
+    if name == "PostModelSwitch":
+        for field in ("context_tokens", "estimated_cache_write_usd"):
+            value = event.get(field)
+            if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and 0 <= value <= (100_000_000 if field == "context_tokens" else 1_000_000)):
+                record[field] = value
+        if isinstance(event.get("prompt_cache_warm"), bool):
+            record["prompt_cache_warm"] = event["prompt_cache_warm"]
+        if event.get("cache_ttl") in ("5m", "1h"):
+            record["cache_ttl"] = event["cache_ttl"]
+        if event.get("source") in ("command", "picker", "sdk", "auto", "resume"):
+            record["source"] = event["source"]
+    if name == "SessionStart" and event.get("source") in ("startup", "resume", "clear", "compact", "fork"):
+        record["source"] = event["source"]
+    if name == "StopFailure":
+        value = event.get("error")
+        record["error"] = value if isinstance(value, str) and value in FAILURE_TYPES else "unknown"
     _record(root, record)
 
 
@@ -205,8 +259,11 @@ def hook(root: Path, stream: Any = None, jev_client: Callable[[dict, float, Path
             _status(root, "privacy_filtered", {})
             return 0
         event = json.loads(raw)
-        if isinstance(event, dict) and event.get("hook_event_name", "UserPromptSubmit") == "UserPromptSubmit":
-            shadow(root, event, jev_client)
+        if isinstance(event, dict):
+            if event.get("hook_event_name", "UserPromptSubmit") == "UserPromptSubmit":
+                shadow(root, event, jev_client)
+            elif event.get("hook_event_name") in NATIVE_EVENTS:
+                native_event(root, event)
     except Exception:
         pass
     return 0
@@ -233,6 +290,9 @@ def _hook_main(root: Path) -> int:
 def settings_content(root: Path) -> bytes:
     command = " ".join(shlex.quote(part) for part in (sys.executable, str(Path(__file__).resolve()), "hook", "--root", str(root)))
     content = {"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": command, "async": True, "timeout": 3}]}]}}
+    # Do not register PreModelSwitch: its timeout can block a native switch.
+    for name in sorted(NATIVE_EVENTS):
+        content["hooks"][name] = [{"hooks": [{"type": "command", "command": command, "timeout": 3}]}]
     return (json.dumps(content, indent=2, sort_keys=True) + "\n").encode()
 
 
@@ -296,6 +356,10 @@ def launch(argv: list[str], root: Path) -> int:
     binary = shutil.which("claude")
     if not binary:
         raise ValueError("Claude Code is not installed or not on PATH; install and sign in with Claude Code first")
+    version = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=5, check=False)
+    match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", version.stdout[:500])
+    if version.returncode or not match or tuple(map(int, match.groups())) < MIN_CLAUDE_VERSION:
+        raise ValueError("Effortlane Claude Shadow requires Claude Code 2.1.251 or newer for native model-switch hooks")
     settings = ensure_settings(root)
     return subprocess.run([binary, "--settings", str(settings), *argv], check=False).returncode
 
@@ -307,6 +371,12 @@ def report(root: Path, hours: int = 168) -> dict[str, Any]:
     counts: dict[str, int] = {}
     proposals: dict[str, int] = {}
     latencies: list[int] = []
+    native_counts: dict[str, int] = {}
+    observed_models: dict[str, int] = {}
+    observed_efforts: dict[str, int] = {}
+    failures: dict[str, int] = {}
+    switch_cache_estimates = []
+    warm_switches = 0
     state = root / "state"
     truncated = False
     try:
@@ -333,7 +403,30 @@ def report(root: Path, hours: int = 168) -> dict[str, Any]:
             row = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(row, dict) or row.get("event") != "claude_shadow_proposal" or not isinstance(row.get("ts"), int) or row["ts"] < cutoff:
+        if not isinstance(row, dict) or not isinstance(row.get("ts"), int) or row["ts"] < cutoff:
+            continue
+        if row.get("event") == "claude_native_event":
+            name = row.get("hook_event")
+            if not isinstance(name, str) or name not in NATIVE_EVENTS:
+                continue
+            native_counts[name] = native_counts.get(name, 0) + 1
+            model = row.get("actual_model")
+            if isinstance(model, str) and MODEL_ID.fullmatch(model):
+                observed_models[model] = observed_models.get(model, 0) + 1
+            effort = row.get("actual_effort")
+            if isinstance(effort, str) and effort in ("low", "medium", "high", "xhigh", "max"):
+                observed_efforts[effort] = observed_efforts.get(effort, 0) + 1
+            error = row.get("error")
+            if name == "StopFailure":
+                error = error if isinstance(error, str) and error in FAILURE_TYPES else "unknown"
+                failures[error] = failures.get(error, 0) + 1
+            estimate = row.get("estimated_cache_write_usd")
+            if name == "PostModelSwitch":
+                warm_switches += row.get("prompt_cache_warm") is True
+                if isinstance(estimate, (int, float)) and not isinstance(estimate, bool) and 0 <= estimate <= 1_000_000:
+                    switch_cache_estimates.append(estimate)
+            continue
+        if row.get("event") != "claude_shadow_proposal":
             continue
         outcome = row.get("outcome") if isinstance(row.get("outcome"), str) and row["outcome"] in OUTCOMES else "error"
         counts[outcome] = counts.get(outcome, 0) + 1
@@ -349,6 +442,12 @@ def report(root: Path, hours: int = 168) -> dict[str, Any]:
     return {"hours": hours, "events": sum(counts.values()), "outcomes": counts, "truncated": truncated,
             "candidate_coverage": {"eligible_pairs": eligible_pairs, "proposed_pairs": proposals},
             "actual_model": {"unknown": sum(counts.values())},
+            "native_observations": {"events": native_counts, "model_observations": observed_models,
+                                    "effort_observations": observed_efforts,
+                                    "failures": failures, "warm_cache_switches": warm_switches,
+                                    "estimated_cache_write_usd": round(sum(switch_cache_estimates), 6),
+                                    "estimate_records": len(switch_cache_estimates),
+                                    "scope": "lifecycle observations; not per-turn usage or subscription savings"},
             "latency_ms": {"average": round(sum(latencies) / len(latencies)) if latencies else None,
                            "max": max(latencies) if latencies else None}}
 

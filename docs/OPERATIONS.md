@@ -178,6 +178,16 @@ claim of better completion quality or quota savings.
 
 [Astra-Ares](https://github.com/miuuyy/Astra-Ares) adapts effort between model generations through a separately patched Codex CLI; it keeps the selected model fixed and does not integrate with this Desktop adapter. [pi-shift-router](https://github.com/green-dalii/pi-shift-router) combines tier routing, cache-aware thresholds and task-level subagent orchestration in Pi. [BitRouter](https://github.com/bitrouter/bitrouter) builds an outcome-driven proxy/control plane. Their ideas are useful for future evaluation, but their runtime and integration assumptions differ from native Codex Desktop. The backtest in `0xNatoshi/jev-codex-router` holds token counts fixed under alternative models, so it estimates API-equivalent spend rather than proven completion quality or Pro allowance savings.
 
+[dirien/jev-router](https://github.com/dirien/jev-router) provides a more complete
+Claude Auto gateway with per-human-turn routing, session tier continuity and
+native Claude credential pass-through. Its source forwards client credentials
+only to the configured native provider when no gateway API key overrides them;
+its Codex configuration uses API-key execution and is not a Pro replacement.
+It is a candidate reference, not a measured superiority claim. Gateway integration
+also needs explicit request-class headers and MCP tool-search settings to avoid
+background-call routing and inflated tool context. Effortlane's Claude release
+uses native observer hooks; automatic execution routing remains unimplemented.
+
 MIT licensed. Contributions and reproducible outcome measurements are welcome.
 
 ### Synthetic model rejected by ChatGPT authentication
