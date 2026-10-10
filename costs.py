@@ -23,6 +23,8 @@ CODEX_CREDITS = {
     "gpt-5.6-sol": (100, 10, 500),
 }
 API_USD = {
+    # Published Standard short-context rate, verified 2026-10-06.
+    "gpt-6.1-sol": (2, 0.10, 10),
     "gpt-6-luna": (0.10, 0.01, 0.50),
     "gpt-6-sol": (2, 0.20, 10),
     "gpt-6-astra": (10, 1, 50),
@@ -160,6 +162,7 @@ def cost_report(rows: list[dict], hours: int = 168, since: float | None = None) 
                 "published_rate_source": JEV_RATE_URL,
                 "cost_usd": None, "cost_reason": "No TypeSafe account billing export verified; some old decisions did not record Jev tokens."},
         "sources": {"codex_credits": CODEX_CREDITS_URL, "api_usd": API_PRICES_URL,
+                    "sol_6_1_api_rate_checked": "2026-10-06",
                     "rate_card_checked": "2026-09-30", "tier": "standard_short_context"},
         "limits": "Same-token counterfactual, not quality-equivalent savings. Desktop may record only the last model call of a turn. Pro included usage is not a dollar charge; API rates are comparison units only. Fast/long-context rates are not applied.",
     }

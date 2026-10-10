@@ -105,15 +105,17 @@ class CostReportTests(unittest.TestCase):
         self.assertIn("all-6.1-Sol 5000.0000", summary)
         self.assertIn("Linked subset difference vs Sol: +47.5000 (+95.0%)", summary)
 
-    def test_six_point_one_sol_is_priced_in_credits_but_not_in_unpublished_api_rates(self):
+    def test_six_point_one_sol_published_api_rates_include_cache_without_double_charging_reasoning(self):
         now = int(time.time())
         usage = {"event": "usage", "ts": now, "mode": "auto", "client": "cli",
                  "model": "gpt-6.1-sol", "input_tokens": 1_000_000,
-                 "cached_input_tokens": 800_000, "output_tokens": 100_000}
+                 "cached_input_tokens": 800_000, "output_tokens": 100_000,
+                 "reasoning_output_tokens": 90_000}
         view = cost_report([usage])["auto"]["observed_all_auto"]
         self.assertEqual(view["priced_calls"], 1)
         self.assertEqual(view["codex_credit_equivalent"]["observed_mix"], 37)
-        self.assertEqual(view["api_usd_equivalent"]["unpriced_calls"], 1)
+        self.assertEqual(view["api_usd_equivalent"]["unpriced_calls"], 0)
+        self.assertEqual(view["api_usd_equivalent"]["observed_mix"], 1.48)
 
     def test_missing_cache_detail_is_unpriced_not_assumed_zero(self):
         now = int(time.time())
