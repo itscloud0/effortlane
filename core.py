@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
-from costs import CODEX_CREDITS
+from costs import API_USD, CODEX_CREDITS
 
 
 ENDPOINT = "https://api.typesafe.ai/v1/systemone"
@@ -42,10 +42,41 @@ SHADOW_POLICIES = ("baseline", "completion_v1", "completion_v2", "completion_v3"
 MAX_TASK = 600
 MAX_DOSSIER = 1800
 CONTINUATION_TTL = 3600
+
+
 DEFAULT_CONFIG = Path("~/.local/share/jev-codex-router/config.json").expanduser()
 DEFAULT_CATALOG = Path("~/.local/share/jev-codex-router/native-models.json").expanduser()
 DEFAULT_STATE = Path("~/.local/share/jev-codex-router/state/leases.json").expanduser()
 DEFAULT_TELEMETRY = Path("~/.local/share/jev-codex-router/state/telemetry.jsonl").expanduser()
+
+def cache_switch_estimate(previous: str, target: str, payload: dict, config: dict) -> dict | None:
+    """Standard API rate sensitivity, not a prediction of subscription debits.
+
+    Repeat the last observed per-call volume for a bounded horizon. Conservatively
+    charge the first target call as a full cache write; no effort savings assumed.
+    Missing/stale evidence leaves the existing continuity guard in charge.
+    """
+    horizon = config.get("cache_payback_requests", 2)
+    if (previous not in API_USD or target not in API_USD
+            or payload.get("cache_sample_model") != previous
+            or not isinstance(horizon, int) or isinstance(horizon, bool) or not 1 <= horizon <= 8):
+        return None
+    values = [payload.get("cache_sample_" + name) for name in ("input", "cached", "output", "age_s")]
+    if any(not isinstance(v, int) or isinstance(v, bool) or not 0 <= v <= 1_000_000_000 for v in values):
+        return None
+    inp, cached, out, age = values
+    if not inp or cached > inp or age > 300:
+        return None
+    # Published long-context rates apply to the whole request, including output.
+    scale = (2, 2, 1.5) if inp > 272_000 else (1, 1, 1)
+    old = tuple(a * b for a, b in zip(API_USD[previous], scale))
+    new = tuple(a * b for a, b in zip(API_USD[target], scale))
+    def warm(rates):
+        return ((inp - cached) * rates[0] + cached * rates[1] + out * rates[2]) / 1_000_000
+    stay = horizon * warm(old)
+    switch = (inp * new[0] * 1.25 + out * new[2]) / 1_000_000 + (horizon - 1) * warm(new)
+    return {"requests": horizon, "stay_usd": round(stay, 8), "switch_usd": round(switch, 8),
+            "worth_switching": switch < stay, "sample_age_s": age}
 
 _ENVELOPE = re.compile(
     r"<\s*(?:AGENTS|INSTRUCTIONS|environment_context|system|developer|skills_instructions|app-context|permissions|model_switch|recommended_plugins)[^>]*>.*?<\s*/\s*(?:AGENTS|INSTRUCTIONS|environment_context|system|developer|skills_instructions|app-context|permissions|model_switch|recommended_plugins)\s*>",
@@ -751,7 +782,14 @@ class Router:
                 threshold = config.get("large_context_sol_floor_tokens", 48_000)
                 long_context = isinstance(threshold, int) and not isinstance(threshold, bool) and threshold > 0 and isinstance(context, int) and not isinstance(context, bool) and context >= threshold
                 cache_hot = isinstance(payload.get("cached_input_pct"), int) and not isinstance(payload.get("cached_input_pct"), bool) and payload["cached_input_pct"] >= 80
-                if not uncertain_route and not new_task and (long_context or cache_hot):
+                estimate = cache_switch_estimate(previous, roles[chosen_role]["slug"], payload, config) if not uncertain_route else None
+                receipt["cache_guard_basis"] = "projection" if estimate else "heuristic"
+                if estimate:
+                    receipt["cache_switch_estimate"] = estimate
+                    if not estimate["worth_switching"]:
+                        chosen_role = previous_role
+                        reason = "cache_hysteresis"
+                elif not uncertain_route and not new_task and (long_context or cache_hot):
                     downgrade_role = chosen_role
                     downgrade_streak = min(3, (lease.get("downgrade_streak", 0) if lease and lease.get("downgrade_role") == chosen_role else 0) + 1)
                 if uncertain_route or (downgrade_streak and downgrade_streak < 3):
@@ -787,12 +825,24 @@ class Router:
                           and isinstance(details.get("cached_tokens"), int)
                           and not isinstance(details["cached_tokens"], bool))
         cached = _bounded_int(details["cached_tokens"]) if cache_observed else 0
+        estimate = decision.get("cache_switch_estimate")
+        safe_estimate = None
+        if (isinstance(estimate, dict) and type(estimate.get("requests")) is int
+                and 1 <= estimate["requests"] <= 8
+                and type(estimate.get("sample_age_s")) is int and 0 <= estimate["sample_age_s"] <= 300
+                and type(estimate.get("worth_switching")) is bool
+                and all(type(estimate.get(k)) in (int, float) and math.isfinite(estimate[k])
+                        and 0 <= estimate[k] <= 1_000_000 for k in ("stay_usd", "switch_usd"))):
+            safe_estimate = {k: estimate[k] for k in
+                             ("requests", "sample_age_s", "worth_switching", "stay_usd", "switch_usd")}
         record = {
             "event": "route" if event == "route" else "usage",
             "ts": int(time.time()), "session": self._safe_hash(decision.get("session")),
             "turn_hash": self._safe_hash(decision.get("turn_hash")),
             "mode": decision.get("mode") if decision.get("mode") in ("auto", "shadow", "off", "native") else None,
             "policy": decision.get("policy") if decision.get("policy") in SHADOW_POLICIES else None,
+            "cache_switch_estimate": safe_estimate,
+            "cache_guard_basis": decision.get("cache_guard_basis") if decision.get("cache_guard_basis") in ("projection", "heuristic") else None,
             "reason": decision.get("reason") if decision.get("reason") in (
                 "concrete_model", "catalog_unavailable", "sol_catalog_unavailable", "cannot_route", "state_error",
                 "off", "lease", "continuation_lease", "fallback", "decision_cache", "jev", "jev_error", "jev_timeout", "invalid_decision", "privacy_fallback",

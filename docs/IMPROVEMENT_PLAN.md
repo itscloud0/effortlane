@@ -174,3 +174,8 @@ turns, then follow `EVALUATION.md` for a prospective comparison. Use `effortlane
 claude` only after installing and authenticating native Claude Code. No allowance
 saving, quality improvement, or universal Desktop-tool compatibility is claimed
 by these checks.
+
+
+## 2026-10-10: measured cache downgrade projection
+
+Implemented a bounded v4 projection using fresh exact native per-call input/cache/output counters, matching actual model, published Standard model rates, full first-request cache rewrite, and long-context uplift. Default horizon two requests, configurable 1–8. Profitable downgrades do not wait three turns; uneconomic ones do not unlock on repetition. Missing evidence retains the continuity heuristic. Capability upgrades, overrides and Shadow executor effort remain unchanged. No token-volume multiplier for effort and no claimed quota saving. Core/adapter tests cover accounting, invalid/stale samples, unknown prices, repeated uneconomic proposals, Shadow, manual choice and capability upgrades. Metrics distinguish projected versus heuristic guards. No dependency/auth/Desktop enablement changes. Outcome benchmarks and richer typed task-feedback state remain separate unfinished improvements.

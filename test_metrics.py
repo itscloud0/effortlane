@@ -12,6 +12,16 @@ class MetricsReportTests(unittest.TestCase):
                       "effort": "high", "proposed_model": "gpt-6-luna", "proposed_effort": "medium",
                       "reason": "fallback", "jev_ms": 3, "router_ms": 5}
 
+    def test_cache_guard_projection_counts_are_not_cost_savings(self):
+        rows = [{**self.route, 'cache_guard_basis': 'projection', 'reason': 'cache_hysteresis'},
+                {**self.route, 'cache_guard_basis': 'projection', 'reason': 'jev'},
+                {**self.route, 'cache_guard_basis': 'heuristic'},
+                {**self.route, 'cache_guard_basis': 'secret-text'}]
+        view = metrics_report(rows)['routes']['cache_guard']
+        self.assertEqual(view['bases'], {'projection': 2, 'heuristic': 1})
+        self.assertEqual(view['projected_holds'], 1)
+        self.assertNotIn('saved_usd', view)
+
     def test_linked_tokens_and_switches_have_explicit_coverage(self):
         route = {**self.route, "switched": True}
         usage = {**route, "event": "usage", "input_tokens": 100, "cached_input_tokens": 75,

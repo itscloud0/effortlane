@@ -1,7 +1,12 @@
 {
-  "auto_roles": ["luna", "terra", "sol"],
+  "auto_roles": [
+    "luna",
+    "terra",
+    "sol"
+  ],
   "auto_policy": "completion_v4",
   "shadow_policy": "completion_v4",
   "effort_policy": "jev",
-  "fixed_effort": "medium"
+  "fixed_effort": "medium",
+  "cache_payback_requests": 2
 }

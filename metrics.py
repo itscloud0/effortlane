@@ -216,7 +216,14 @@ def metrics_report(rows: list[dict], hours: int = 168, since: float | None = Non
     jev_latency: list[float] = []
     router_latency: list[float] = []
     valid_route_rows = 0
+    cache_bases: Counter[str] = Counter()
+    projected_holds = 0
     for row in routes:
+        basis = row.get("cache_guard_basis")
+        if basis in ("projection", "heuristic"):
+            cache_bases[basis] += 1
+            if basis == "projection" and row.get("reason") in ("cache_hysteresis", "shadow_cache_hysteresis"):
+                projected_holds += 1
         session = row.get("session")
         client = _safe_client(row.get("client"))
         key = _link_key(row)
@@ -400,6 +407,8 @@ def metrics_report(rows: list[dict], hours: int = 168, since: float | None = Non
                           "plan_type_observations": dict(sorted(plan_types.items())),
                           "note": "Negative usage deltas indicate a reset or correction; they are not savings claims."},
         "routes": {"decisions": len(routes), "valid_linkable_decisions": valid_route_rows,
+                   "cache_guard": {"bases": dict(cache_bases), "projected_holds": projected_holds,
+                                   "note": "Projection assumes repeated last-call volumes; not realized savings or Pro debits."},
                    "executed_pairs": dict(sorted(route_pairs.items())), "proposed_pairs": dict(sorted(proposed_pairs.items())),
                    "reasons": dict(sorted(reasons.items())), "fallbacks": dict(sorted(fallbacks.items())),
                    "clients": dict(sorted(clients.items())), "unique_pseudonymous_sessions": len(sessions),

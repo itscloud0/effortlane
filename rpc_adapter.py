@@ -256,6 +256,7 @@ class Adapter:
         self.actual: dict[str, tuple[str, str]] = {}
         self.last_context: dict[str, int] = {}
         self.last_cache_pct: dict[str, tuple[int, float]] = {}
+        self.last_cache_usage: dict[str, tuple[str, int, int, int, float]] = {}
         self.turn_usage: dict[tuple[str, str], dict] = {}
         self.usage_totals: dict[str, dict] = {}
         self.usage_windows: dict[str, dict] = {}
@@ -368,6 +369,14 @@ class Adapter:
                 payload["cached_input_pct"] = cached_pct
                 payload["cache_state"] = "hot" if cached_pct > 0 else "warming"
                 payload["cache_age_s"] = int(age)
+        sample = self.last_cache_usage.get(thread_id)
+        if sample:
+            model, inp, cached, output, observed_at = sample
+            age = time.monotonic() - observed_at
+            if 0 <= age <= 300:
+                payload.update(cache_sample_model=model, cache_sample_input=inp,
+                               cache_sample_cached=cached, cache_sample_output=output,
+                               cache_sample_age_s=int(age))
         try:
             decision = self.router.decide(payload, client=self.client_name, session_id=thread_id,
                                           native_selection=True, mode_override="auto" if alias == "effortlane-auto" else "shadow")
@@ -644,6 +653,7 @@ class Adapter:
                         signals = self.turn_signals.setdefault(thread_id, {})
                         signals["tool_calls"] = min(1_000_000, signals.get("tool_calls", 0) + 1)
                 if method == "thread/compacted":
+                    self.last_cache_usage.pop(thread_id, None)
                     signals = self.turn_signals.setdefault(thread_id, {})
                     signals["compactions"] = min(1_000_000, signals.get("compactions", 0) + 1)
                     if thread_id in self.usage_windows:
@@ -666,6 +676,7 @@ class Adapter:
                         or (window and window.get("turn_id") not in (None, observed_turn))):
                     return raw
                 last = (params.get("tokenUsage") or {}).get("last") if isinstance(params.get("tokenUsage"), dict) else None
+                self.last_cache_usage.pop(thread_id, None)
                 context = last.get("inputTokens") if isinstance(last, dict) else None
                 if isinstance(context, int) and not isinstance(context, bool) and context >= 0:
                     self._remember(self.last_context, thread_id, min(context, 1_000_000_000))
@@ -674,6 +685,12 @@ class Adapter:
                     if isinstance(cached, int) and not isinstance(cached, bool) and 0 <= cached <= context and context > 0:
                         self._remember(self.last_cache_pct, thread_id,
                                        (min(100, (cached * 100) // context), time.monotonic()))
+                        output = last.get("outputTokens")
+                        actual = self.actual.get(thread_id)
+                        if (actual and isinstance(actual[0], str) and type(output) is int
+                                and 0 <= output <= 1_000_000_000):
+                            self._remember(self.last_cache_usage, thread_id,
+                                           (actual[0], context, cached, output, time.monotonic()))
                 turn_id = params.get("turnId")
                 if isinstance(turn_id, str) and isinstance(params.get("tokenUsage"), dict):
                     self._observe_usage(thread_id, turn_id, params["tokenUsage"])

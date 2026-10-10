@@ -279,6 +279,26 @@ class AdapterTests(unittest.TestCase):
         settings = {'jsonrpc': '2.0', 'method': 'thread/settings/updated', 'params': {'threadId': 'thread-1', 'threadSettings': {'model': 'gpt-6-luna', 'effort': 'low'}}}
         self.assertEqual(json.loads(self.adapter.server((json.dumps(settings)+'\n').encode()))['params']['threadSettings']['model'], 'effortlane-auto')
 
+    def test_cache_projection_uses_exact_native_per_call_counters(self):
+        self.adapter.actual['sample-thread'] = ('gpt-6-sol', 'medium')
+        update = {'jsonrpc': '2.0', 'method': 'thread/tokenUsage/updated', 'params': {
+            'threadId': 'sample-thread', 'tokenUsage': {'last': {
+                'inputTokens': 10000, 'cachedInputTokens': 9500, 'outputTokens': 120}}}}
+        raw = (json.dumps(update) + '\n').encode()
+        self.assertEqual(self.adapter.server(raw), raw)
+        self.adapter._route('effortlane-auto', {'input': [{'type': 'text', 'text': 'Rename a variable'}]},
+                            'sample-thread', None)
+        sent = self.router.calls[-1][0]
+        self.assertEqual((sent['cache_sample_model'], sent['cache_sample_input'],
+                          sent['cache_sample_cached'], sent['cache_sample_output']),
+                         ('gpt-6-sol', 10000, 9500, 120))
+        self.assertLessEqual(sent['cache_sample_age_s'], 1)
+        update['params']['tokenUsage']['last'] = {'inputTokens': 9000}
+        self.adapter.server((json.dumps(update) + '\n').encode())
+        self.adapter._route('effortlane-auto', {'input': [{'type': 'text', 'text': 'Rename another variable'}]},
+                            'sample-thread', None)
+        self.assertNotIn('cache_sample_input', self.router.calls[-1][0])
+
     def test_thread_metadata_keeps_alias_for_desktop_effort_picker(self):
         self.adapter.store.update('t', alias='effortlane-auto', actual='gpt-6-sol', effort='medium')
         started = {'jsonrpc': '2.0', 'method': 'thread/started', 'params': {'thread': {'id': 't', 'model': 'gpt-6-sol'}}}
