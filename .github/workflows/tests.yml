@@ -15,5 +15,7 @@ jobs:
         run: python3 scripts/render_evidence.py --check
       - name: Unit tests
         run: python3 -m unittest discover -s . -p 'test_*.py' -q
+      - name: Lanes on the macOS system Python
+        run: /usr/bin/python3 --version && /usr/bin/python3 -m unittest test_lane -q
       - name: Compile runtime modules
-        run: python3 -m py_compile core.py manage.py metrics.py trials.py claude_shadow.py rpc_adapter.py desktop_bootstrap.py cli_bridge.py transport.py
+        run: python3 -m py_compile core.py manage.py metrics.py trials.py claude_shadow.py rpc_adapter.py desktop_bootstrap.py cli_bridge.py transport.py lane.py

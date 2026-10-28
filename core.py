@@ -322,7 +322,10 @@ class Router:
 
     @staticmethod
     def _call_jev(body: dict, timeout: float, key_file: Path) -> dict:
-        key = key_file.expanduser().read_text().strip()
+        return Router._post_jev(body, timeout, key_file.expanduser().read_text().strip())
+
+    @staticmethod
+    def _post_jev(body: dict, timeout: float, key: str) -> dict:
         if not key or len(key) > 4096:
             raise ValueError("invalid key")
         request = urllib.request.Request(

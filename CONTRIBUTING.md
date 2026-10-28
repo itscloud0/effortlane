@@ -4,7 +4,7 @@ Effortlane currently integrates native Codex on macOS. Claude Code has experimen
 
 ## Development
 
-Use Python 3.11+; the runtime uses the standard library. No dependency install is needed for the unit suite.
+Use Python 3.11+; the runtime uses the standard library. `lane.py` must also run on the macOS system Python 3.9 (see AGENTS.md). No dependency install is needed for the unit suite.
 
 ```sh
 python3 -m unittest discover -s . -p 'test_*.py' -q

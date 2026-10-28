@@ -6,14 +6,14 @@
 
 **Choose model and reasoning effort. Keep your native coding agent.**
 
-Open-source LLM routing for Codex on macOS, with Shadow evaluation and local usage telemetry.
+Open-source LLM routing for Claude Code, Codex and Hermes on macOS, with Shadow evaluation and local usage telemetry.
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/itscloud0/effortlane/tests.yml?branch=main&style=flat-square&label=tests)](https://github.com/itscloud0/effortlane/actions/workflows/tests.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-94a3b8?style=flat-square)](LICENSE)
 ![macOS](https://img.shields.io/badge/platform-macOS-94a3b8?style=flat-square)
 ![Experimental](https://img.shields.io/badge/status-experimental-fbbf24?style=flat-square)
 
-[**Try Shadow →**](#quick-start) · [See the evidence](#what-we-have-measured) · [How it works](#how-it-works) · [Get help](#help-build-effortlane)
+[**Route your agents →**](#lanes-route-claude-code-codex-and-hermes) · [Try Shadow](#quick-start) · [See the evidence](#what-we-have-measured) · [How it works](#how-it-works) · [Get help](#help-build-effortlane)
 
 </div>
 
@@ -34,7 +34,30 @@ The goal: **less subscription allowance per correctly completed task**. A cheap 
 > [!IMPORTANT]
 > **Experimental. Subscription savings and quality improvements are not yet proven.** Codex CLI on macOS is implemented. Desktop and mobile Remote should stay native. Native Shadow uses documented hooks; the Desktop Auto adapter remains experimental and opt-in. The external decision service may have its own cost.
 
-## Quick start
+## Lanes: route Claude Code, Codex and Hermes
+
+Jev picks a **light, standard or deep** lane for each task; `lane` starts your agent on that lane's model and effort. Runs on the macOS system Python, uses your own TypeSafe/Jev key.
+
+```sh
+git clone https://github.com/itscloud0/effortlane.git && cd effortlane
+python3 lane.py install --model sonnet   # key prompt, `lane` launcher, Claude subagents + hook; new Claude sessions start on Sonnet
+lane claude "why does the sync worker deadlock under load"   # -> claude --model opus --effort high
+lane codex "rename getUser to fetchUser"                     # -> codex -m <newest Luna> -c model_reasoning_effort="low"
+lane hermes "summarize this module"                          # -> hermes chat -m <newest Terra> -q ...
+lane doctor && lane stats
+```
+
+| Lane | Claude Code | Codex | Hermes |
+|---|---|---|---|
+| light | Haiku · low | Luna · low | Luna |
+| standard | Sonnet · medium | Terra · medium | Terra |
+| deep | Opus · high | Sol · high | Sol |
+
+Inside a Claude Code session the model can't be switched by a hook, so `install` also adds `scout` (Haiku), `builder` (Sonnet) and `architect` (Opus) subagents and a prompt hook that points the main agent at the right one. A Sonnet session then borrows Opus only for the hard part. Native `--model`/`--effort` always win; if Jev is unreachable, local rules pick the lane. [Lanes guide](docs/LANES.md)
+
+## Codex Auto and Shadow
+
+### Quick start
 
 You need **macOS, Python 3.11+, native Codex installed and signed in, and a TypeSafe/Jev API key**. No per-project setup or Python dependency install is required.
 
@@ -137,7 +160,8 @@ If the decision service is unavailable or the dossier lacks safe signal, Effortl
 |---|---|
 | Codex interactive CLI, `exec`, resume · macOS | Implemented; validate against your installed Codex release |
 | Codex Desktop · macOS | Experimental opt-in adapter; uses an undocumented app override |
-| Claude Code · macOS | [Experimental Shadow hooks](docs/CLAUDE_CODE.md); proposals and native lifecycle metadata; live validation pending |
+| Claude Code · macOS | [Lanes](docs/LANES.md): per-launch model/effort, Haiku/Sonnet/Opus subagents, prompt hook. [Shadow hooks](docs/CLAUDE_CODE.md) remain observe-only |
+| Hermes · macOS | [Lanes](docs/LANES.md): per-launch model (openai-codex provider, or configured models) |
 | Windows / Linux | Not supported by the installer |
 
 ## Common questions
@@ -187,6 +211,6 @@ A star helps others find the project. Never post API keys, auth files, proprieta
 
 ## Documentation
 
-[Operations and policy](docs/OPERATIONS.md) · [Metrics](docs/METRICS.md) · [Evaluation](docs/EVALUATION.md) · [Claude Code](docs/CLAUDE_CODE.md) · [Evidence history](SHADOW_COMPARISON.md) · [Security](SECURITY.md) · [Related work](docs/OPERATIONS.md#related-work)
+[Lanes](docs/LANES.md) · [Operations and policy](docs/OPERATIONS.md) · [Metrics](docs/METRICS.md) · [Evaluation](docs/EVALUATION.md) · [Claude Code](docs/CLAUDE_CODE.md) · [Evidence history](SHADOW_COMPARISON.md) · [Security](SECURITY.md) · [Related work](docs/OPERATIONS.md#related-work)
 
 Maintained by [@itscloud0](https://github.com/itscloud0), with contributions welcome under the [MIT license](LICENSE). Independent community project; not affiliated with OpenAI, Anthropic, or TypeSafe.
