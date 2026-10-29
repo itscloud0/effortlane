@@ -47,7 +47,7 @@ Type `claude` as before. One line on stderr says what this session is:
 | Mode | What runs | Set with |
 |---|---|---|
 | shadow (default) | your normal Claude; Jev records the lane it would pick | `claude_mode` in `lane.json` |
-| lanes | Sonnet · medium, `scout`/`builder`/`architect`, Jev delegation hints | `claude --effortlane-auto` |
+| lanes | Sonnet · medium, `scout`/`builder`/`architect`, Jev delegation hints, [cost guards](#cost-guards) | `claude --effortlane-auto` |
 | trial | random per new session: control (shadow) or lanes | `lane trial start` |
 | off | plain Claude | `claude --effortlane-off`, `claude-native` |
 
@@ -56,6 +56,44 @@ Type `claude` as before. One line on stderr says what this session is:
 and so does anything run from scripts (shell functions only exist in interactive shells).
 A `--model`/`--effort` you pass wins; such sessions are marked `manual` and left out of
 the comparison. If planning a launch ever fails, native Claude starts.
+
+## Where your tokens go: `lane xray`
+
+```sh
+lane xray            # last 7 days of Claude Code; --days N, --json
+```
+
+Reads Claude Code's own transcripts (usage numbers, timestamps, tool names and output
+sizes only; nothing is stored or sent) and shows:
+
+- the bill split into re-reading history (cache reads), cache writes, output and input,
+  and main sessions vs subagents, priced per model;
+- the typical request size, what is loaded before your first prompt (system prompt,
+  tools, skills, MCP servers, CLAUDE.md), the largest tool outputs and image count;
+- the levers ranked by what they would have saved on those same tokens: subagents on a
+  cheaper model, cache reloads after breaks, the main session on a cheaper model, a
+  smaller start-up load, and shorter sessions.
+
+Repricing the same tokens is an upper bound: a cheaper model may take more steps. The
+trial measures what actually happens.
+
+## Cost guards
+
+The lanes arm also turns on two guards (`lane_guard.py`):
+
+- **Reload warning.** Every request re-sends the whole history; the prompt cache makes
+  that cheap until it expires (1 h for Claude Code subscriptions, 5 min otherwise). The
+  first prompt after it expired, in a session above 120k tokens, is blocked once with
+  what it will cost (for Opus about 40 normal steps). Sending it again goes through;
+  `/clear` with a short restatement is cheapest.
+- **Cheaper generic subagents.** A general-purpose subagent started without a model
+  inherits the session's model. A `PreToolUse` hook gives it Sonnet instead; an explicit
+  model, a named agent (`scout`, `architect`, your own) and forks are left alone. The
+  session also gets a short instruction to delegate with a brief instead of forking the
+  whole conversation.
+
+Tune or disable them in `lane.json`:
+`"guards": {"reload_tokens": 200000, "subagent_model": "haiku"}`, or `"guards": false`.
 
 ## Trial and exact metrics
 

@@ -44,6 +44,7 @@ python3 lane.py install        # key prompt, `lane`, seamless `claude`
 lane trial start               # 14 days: each new session is control or lanes at random
 claude                         # as always
 lane trial report              # exact tokens, cost, limit % and rework per arm, with a verdict
+lane xray                      # where your tokens go and which lever would cut them
 lane codex "rename getUser to fetchUser"   # Codex and Hermes: per-launch lanes
 ```
 

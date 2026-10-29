@@ -6,7 +6,8 @@ which execs the real Claude Code with the lane harness injected through its own
 
 Trial arms, assigned per new session:
   control  your normal Claude setup; Jev only records what it would pick
-  lanes    Sonnet start, scout/builder/architect subagents, Jev delegation hints
+  lanes    Sonnet start, scout/builder/architect subagents, Jev delegation hints and
+           the lane_guard cost guards (expired-cache reload warning, cheaper subagents)
 
 The report joins sessions to Claude Code transcripts for exact per-request token
 usage (subagents included), prices it per model, and adds the account 5h/7d limit
@@ -190,15 +191,25 @@ def agents_json() -> dict:
     return result
 
 
-def settings_json(mode: str) -> dict:
+DELEGATION = ("Cost rules from Effortlane: delegate with a short self-contained brief to a fresh "
+              "subagent rather than forking this conversation, since a fork copies the whole history. "
+              "Set the subagent model explicitly: haiku for lookups, sonnet for routine edits, opus "
+              "only for hard debugging or design.")
+
+
+def settings_json(mode: str, config: dict | None = None) -> dict:
     command = f"{shlex.quote(_python())} {shlex.quote(_lane_path())}"
     hook = {"type": "command", "command": f"{command} hook --mode {mode}", "timeout": 5}
     if mode == "shadow":
         hook["async"] = True  # recording only: never delay the prompt
-    settings = {
+    settings: dict[str, Any] = {
         "hooks": {"UserPromptSubmit": [{"hooks": [hook]}]},
         "statusLine": {"type": "command", "command": f"{command} statusline"},
     }
+    guards = (config or lane.load_config()).get("guards") or {}
+    if mode == "auto" and guards.get("subagent_model"):
+        settings["hooks"]["PreToolUse"] = [{"matcher": "Agent|Task", "hooks": [
+            {"type": "command", "command": f"{command} pretool", "timeout": 5}]}]
     user = _user_statusline()
     if isinstance(user, dict) and "padding" in user:
         settings["statusLine"]["padding"] = user["padding"]
@@ -264,7 +275,10 @@ def plan_launch(args: list[str], config: dict, cwd: str, rng: random.Random | No
         if not manual:
             cmd += ["--model", model, "--effort", effort] if effort else ["--model", model]
         cmd += ["--agents", json.dumps(agents_json(), separators=(",", ":"))]
-    cmd += ["--settings", json.dumps(settings_json("auto" if arm == "lanes" else "shadow"), separators=(",", ":"))]
+        if not any(a.startswith("--append-system-prompt") or a.startswith("--system-prompt") for a in rest):
+            cmd += ["--append-system-prompt", DELEGATION]
+    mode_name = "auto" if arm == "lanes" else "shadow"
+    cmd += ["--settings", json.dumps(settings_json(mode_name, config), separators=(",", ":"))]
     record = {"event": "session", "arm": arm, "mode": mode, "resumed": resuming,
               "session": session_hash(session) if session else None,
               "model": cmd[cmd.index("--model") + 1] if "--model" in cmd else "native"}
@@ -272,7 +286,7 @@ def plan_launch(args: list[str], config: dict, cwd: str, rng: random.Random | No
 
 
 ARM_NOTE = {"control": "your normal setup (Jev records only)",
-            "lanes": "Sonnet + scout/builder/architect + Jev hints",
+            "lanes": "Sonnet + scout/builder/architect + Jev hints + cost guards",
             "manual": "your --model/--effort; excluded from the comparison",
             "unassigned": "resumed session from before the trial; not counted"}
 
@@ -361,11 +375,15 @@ def statusline(stdin=None, stdout=None) -> int:
 
 # --- report --------------------------------------------------------------------------
 
+def rates(model: str) -> tuple[float, float, float] | None:
+    return next((v for k, v in sorted(PRICES.items(), key=lambda kv: -len(kv[0])) if model.startswith(k)), None)
+
+
 def price(model: str, usage: dict) -> float | None:
-    rates = next((v for k, v in sorted(PRICES.items(), key=lambda kv: -len(kv[0])) if model.startswith(k)), None)
-    if not rates:
+    found = rates(model)
+    if not found:
         return None
-    inp, out, read = rates
+    inp, out, read = found
     cache = usage.get("cache_creation") if isinstance(usage.get("cache_creation"), dict) else {}
     w1h = cache.get("ephemeral_1h_input_tokens") or 0
     w5m = cache.get("ephemeral_5m_input_tokens")
@@ -456,9 +474,11 @@ def collect(since: float) -> dict:
     for row in _rows("sessions.jsonl"):
         if row.get("ts", 0) >= since and row.get("session") and not row.get("resumed"):
             sessions.setdefault(row["session"], {"arm": row.get("arm"), "prompts": 0, "rework": 0,
-                                                 "tiers": {}, "status": None})
+                                                 "tiers": {}, "status": None, "guards": {}})
     for row in _rows("routes.jsonl"):
         s = sessions.get(row.get("session"))
+        if row.get("event") == "guard" and s is not None:
+            s["guards"][row.get("kind")] = s["guards"].get(row.get("kind"), 0) + 1
         if row.get("event") == "hook" and s is not None:
             s["prompts"] += 1
             s["rework"] += bool(row.get("rework"))
@@ -515,6 +535,7 @@ def report(days: float | None = None, as_json: bool = False) -> int:
             "limit_points_per_100_prompts": {k: round(100 * v / prompts, 2) if prompts else None
                                              for k, v in result["limits"][arm].items()},
             "unpriced_requests": sum(s["unpriced_requests"] for s in rows),
+            "guards": {kind: sum(s["guards"].get(kind, 0) for s in rows) for kind in ("reload", "subagent")},
         }
     a, b = arms["control"], arms["lanes"]
     verdict, cost_ci, rework_ci = "not enough data", None, None
@@ -558,6 +579,8 @@ def _print_report(out: dict) -> None:
         ("5h limit pts / 100 prompts", "limit_points_per_100_prompts", lambda v: "-" if v["h5"] is None else f"{v['h5']:.1f}"),
         ("7d limit pts / 100 prompts", "limit_points_per_100_prompts", lambda v: "-" if v["d7"] is None else f"{v['d7']:.1f}"),
         ("lines changed", "lines_changed", lambda v: f"{v:.0f}"),
+        ("reload warnings", "guards", lambda v: str(v["reload"])),
+        ("subagents moved to cheaper", "guards", lambda v: str(v["subagent"])),
     ]
     print(f"{'':<28}{'control':>14}{'lanes':>14}")
     for label, key, fmt in rows:

@@ -35,7 +35,7 @@ DEFAULT_KEY_FILE = Path.home() / ".config" / "jev-codex-router" / "typesafe-api-
 EFFORTLANE_CONFIG = Path.home() / ".local" / "share" / "jev-codex-router" / "config.json"
 JEV_TIMEOUT = 2.0
 HOOK_WALL_SECONDS = 3.0
-RUNTIME_FILES = ("lane.py", "lane_claude.py", "core.py", "costs.py")
+RUNTIME_FILES = ("lane.py", "lane_claude.py", "lane_guard.py", "lane_xray.py", "core.py", "costs.py")
 TIERS = ("light", "standard", "deep")
 AGENTS = ("claude", "codex", "hermes")
 HERE = Path(__file__).resolve().parent
@@ -65,6 +65,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "rules": [],
     # Claude Code prompt hook: add a one-line delegation hint for light and deep prompts.
     "hints": True,
+    # Lanes-arm cost guards (lane_guard.py); "guards": false turns both off.
+    "guards": {"reload_tokens": 120_000, "subagent_model": "sonnet"},
 }
 CODEX_ROLES = ("luna", "terra", "sol", "astra")
 
@@ -282,12 +284,20 @@ def load_config() -> dict:
         config["rules"] = user["rules"]
     if "hints" in user:
         config["hints"] = bool(user["hints"])
+    if user.get("guards") is False:
+        config["guards"] = {}
+    elif isinstance(user.get("guards"), dict):
+        config["guards"].update(user["guards"])
     return config
 
 
 def state_dir() -> Path:
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
     return Path(base) / MARKER
+
+
+def session_digest(session: str) -> str | None:
+    return hashlib.sha256(session.encode()).hexdigest()[:12] if session else None
 
 
 def log_route(record: dict) -> None:
@@ -426,8 +436,8 @@ HINTS = {
 
 
 def hook(stdin=None, stdout=None, jev: JevClient | None = None, mode: str = "auto") -> int:
-    """UserPromptSubmit hook. `shadow` records Jev's lane silently; `auto` also adds a hint.
-    Never blocks the prompt and never fails loudly."""
+    """UserPromptSubmit hook. `shadow` records Jev's lane silently; `auto` also adds a hint
+    and blocks, once, a prompt that would reload a large expired cache. Never fails loudly."""
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     try:
         event = json.load(stdin)
@@ -438,7 +448,16 @@ def hook(stdin=None, stdout=None, jev: JevClient | None = None, mode: str = "aut
         session = str(event.get("session_id") or "")
         record = {"event": "hook", "agent": "claude", "chars": len(prompt), "mode": mode,
                   "rework": bool(REWORK.search(PASTED.sub(" ", prompt))),
-                  "session": hashlib.sha256(session.encode()).hexdigest()[:12] if session else None}
+                  "session": session_digest(session)}
+        if mode == "auto":
+            import lane_guard
+            blocked = lane_guard.reload_check(event, config)
+            if blocked:
+                message, fields = blocked
+                log_route({**fields, "event": "guard", "kind": "reload", "agent": "claude",
+                           "session": record["session"]})
+                json.dump({"decision": "block", "reason": message}, stdout)
+                return 0
         try:
             route = decide(prompt, "claude", config, jev)
         except MissingKey:
@@ -758,6 +777,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:2] == ["wrap", "claude"]:  # raw passthrough: every argument belongs to Claude
         import lane_claude
         return lane_claude.wrap(argv[2:])
+    if argv[:1] == ["pretool"]:
+        import lane_guard
+        return lane_guard.pretool()
     if argv[:1] == ["statusline"]:
         import lane_claude
         return lane_claude.statusline()
@@ -785,6 +807,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("action", choices=("start", "status", "stop", "report"))
     p.add_argument("--days", type=float, help="start: trial length (default 14); report: last N days")
     p.add_argument("--json", action="store_true", help="report: machine-readable")
+    p = sub.add_parser("xray", help="where your Claude Code tokens go, and what would cut them")
+    p.add_argument("--days", type=float, default=7)
+    p.add_argument("--json", action="store_true")
     sub.add_parser("doctor", help="check key, agents, hook and defaults")
     p = sub.add_parser("stats", help="lane counts from the local route log")
     p.add_argument("--days", type=float, default=7)
@@ -829,6 +854,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "report":
             return lane_claude.report(args.days, args.json)
         return lane_claude.trial_status()
+    if args.command == "xray":
+        import lane_xray
+        return lane_xray.xray(args.days, args.json)
     if args.command == "doctor":
         return doctor()
     if args.command == "stats":
