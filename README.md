@@ -36,15 +36,15 @@ The goal: **less subscription allowance per correctly completed task**. A cheap 
 
 ## Lanes: route Claude Code, Codex and Hermes
 
-Jev picks a **light, standard or deep** lane for each task; `lane` starts your agent on that lane's model and effort. Runs on the macOS system Python, uses your own TypeSafe/Jev key.
+Jev picks a **light, standard or deep** lane for each task; your agent runs on that lane's model and effort. Type `claude` as usual: Effortlane comes along without touching `~/.claude`. Uses your own TypeSafe/Jev key and the macOS system Python.
 
 ```sh
 git clone https://github.com/itscloud0/effortlane.git && cd effortlane
-python3 lane.py install --model sonnet   # key prompt, `lane` launcher, Claude subagents + hook; new Claude sessions start on Sonnet
-lane claude "why does the sync worker deadlock under load"   # -> claude --model opus --effort high
-lane codex "rename getUser to fetchUser"                     # -> codex -m <newest Luna> -c model_reasoning_effort="low"
-lane hermes "summarize this module"                          # -> hermes chat -m <newest Terra> -q ...
-lane doctor && lane stats
+python3 lane.py install        # key prompt, `lane`, seamless `claude`
+lane trial start               # 14 days: each new session is control or lanes at random
+claude                         # as always
+lane trial report              # exact tokens, cost, limit % and rework per arm, with a verdict
+lane codex "rename getUser to fetchUser"   # Codex and Hermes: per-launch lanes
 ```
 
 | Lane | Claude Code | Codex | Hermes |
@@ -53,7 +53,7 @@ lane doctor && lane stats
 | standard | Sonnet · medium | Terra · medium | Terra |
 | deep | Opus · high | Sol · high | Sol |
 
-Inside a Claude Code session the model can't be switched by a hook, so `install` also adds `scout` (Haiku), `builder` (Sonnet) and `architect` (Opus) subagents and a prompt hook that points the main agent at the right one. A Sonnet session then borrows Opus only for the hard part. Native `--model`/`--effort` always win; if Jev is unreachable, local rules pick the lane. [Lanes guide](docs/LANES.md)
+A Claude session can't switch models mid-session, so the lanes arm starts on Sonnet with `scout` (Haiku), `builder` (Sonnet) and `architect` (Opus) subagents, and Jev hints which to use: Opus only for the hard part. `claude-native` bypasses everything; native `--model`/`--effort` always win; if Jev is unreachable, local rules pick the lane. [Lanes guide](docs/LANES.md)
 
 ## Codex Auto and Shadow
 

@@ -25,11 +25,9 @@ import socket
 import sys
 import tempfile
 import time
-import urllib.error
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
-from core import Router, sanitize_task
 
 MARKER = "effortlane-lane"
 KEY_ENV = "TYPESAFE_API_KEY"
@@ -37,7 +35,7 @@ DEFAULT_KEY_FILE = Path.home() / ".config" / "jev-codex-router" / "typesafe-api-
 EFFORTLANE_CONFIG = Path.home() / ".local" / "share" / "jev-codex-router" / "config.json"
 JEV_TIMEOUT = 2.0
 HOOK_WALL_SECONDS = 3.0
-RUNTIME_FILES = ("lane.py", "core.py", "costs.py")
+RUNTIME_FILES = ("lane.py", "lane_claude.py", "core.py", "costs.py")
 TIERS = ("light", "standard", "deep")
 AGENTS = ("claude", "codex", "hermes")
 HERE = Path(__file__).resolve().parent
@@ -97,6 +95,14 @@ FORCE = {
     "standard": r"^\s*!(std|standard)\b",
 }
 TRACE = r"Traceback \(most recent call last\)|^\s+at \S+\(|\bpanic:|\bSegmentation fault|Error: "
+REWORK = re.compile(  # follow-ups that signal a failed first attempt
+
+    r"\b(doesn'?t work|does not work|not working|still (broken|failing|wrong|not)|that'?s wrong|"
+    r"wrong (again|file|fix)|revert (it|that|this)|undo (it|that|this)|same error|didn'?t (work|help)|"
+    r"you broke)\b|не работает|вс[её] ещ[её]|опять|снова не|не то\b|неправильно|откати|сломал|"
+    r"та же ошибка|не помогло",
+    re.I,
+)
 PASTED = re.compile(r"<pasted_content[^>]*>.*?(</pasted_content>|\Z)", re.S)
 PATHLIKE = re.compile(r"(?:[\w.-]+/)+[\w.-]+\.\w{1,6}\b")
 
@@ -220,6 +226,8 @@ JevClient = Callable[[dict, float, str], dict]
 
 def decide(prompt: str, agent: str, config: dict, jev: JevClient | None = None) -> Route:
     """Ask Jev for the lane. Raises MissingKey when no key is configured."""
+    import urllib.error
+    from core import Router, sanitize_task  # network stack loads only when Jev is asked
     explicit = override(prompt, config["rules"])
     if explicit:
         return explicit
@@ -417,8 +425,9 @@ HINTS = {
 }
 
 
-def hook(stdin=None, stdout=None, jev: JevClient | None = None) -> int:
-    """UserPromptSubmit hook. Never blocks the prompt and never fails loudly."""
+def hook(stdin=None, stdout=None, jev: JevClient | None = None, mode: str = "auto") -> int:
+    """UserPromptSubmit hook. `shadow` records Jev's lane silently; `auto` also adds a hint.
+    Never blocks the prompt and never fails loudly."""
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     try:
         event = json.load(stdin)
@@ -427,7 +436,8 @@ def hook(stdin=None, stdout=None, jev: JevClient | None = None) -> int:
             return 0
         config = load_config()
         session = str(event.get("session_id") or "")
-        record = {"event": "hook", "agent": "claude", "chars": len(prompt),
+        record = {"event": "hook", "agent": "claude", "chars": len(prompt), "mode": mode,
+                  "rework": bool(REWORK.search(PASTED.sub(" ", prompt))),
                   "session": hashlib.sha256(session.encode()).hexdigest()[:12] if session else None}
         try:
             route = decide(prompt, "claude", config, jev)
@@ -436,7 +446,7 @@ def hook(stdin=None, stdout=None, jev: JevClient | None = None) -> int:
             return 0
         log_route({**record, **route.usage, "tier": route.tier, "source": route.source,
                    "reasons": route.reasons})
-        if config["hints"] and route.tier in HINTS:
+        if mode == "auto" and config["hints"] and route.tier in HINTS:
             json.dump({"hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
                 "additionalContext": HINTS[route.tier].format(
@@ -447,7 +457,7 @@ def hook(stdin=None, stdout=None, jev: JevClient | None = None) -> int:
     return 0
 
 
-def hook_with_deadline() -> int:
+def hook_with_deadline(mode: str = "auto") -> int:
     """The hook runs on every prompt; never let a slow network hold it past the wall limit."""
     def deadline(_signum: int, _frame: Any) -> None:
         raise SystemExit(0)
@@ -455,7 +465,7 @@ def hook_with_deadline() -> int:
     signal.signal(signal.SIGALRM, deadline)
     signal.setitimer(signal.ITIMER_REAL, HOOK_WALL_SECONDS)
     try:
-        return hook()
+        return hook(mode=mode)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
 
@@ -585,14 +595,41 @@ def ensure_key(dry: bool, notes: list[str]) -> None:
     notes.append(f"Jev key: saved to {path} (owner-only)")
 
 
+SHELL_BEGIN, SHELL_END = f"# >>> {MARKER} >>>", f"# <<< {MARKER} <<<"
+
+
+def shell_rc() -> Path | None:
+    shell = Path(os.environ.get("SHELL", "")).name
+    if shell == "zsh":
+        return Path(os.environ.get("ZDOTDIR") or Path.home()) / ".zshrc"
+    if shell == "bash":
+        return Path.home() / ".bashrc"
+    return None
+
+
+def shell_block() -> str:
+    script = shlex.quote(str(share_dir() / "lane.py"))
+    return (f"{SHELL_BEGIN}\n"
+            "# `claude` starts Claude Code through Effortlane lanes; `claude-native` bypasses it.\n"
+            f'claude() {{ if [ -f {script} ]; then python3 {script} wrap claude "$@"; '
+            'else command claude "$@"; fi; }\n'
+            'claude-native() { command claude "$@"; }\n'
+            f"{SHELL_END}\n")
+
+
+def _strip_block(text: str) -> str:
+    return re.sub(rf"\n?{re.escape(SHELL_BEGIN)}.*?{re.escape(SHELL_END)}\n?", "\n", text, flags=re.S)
+
+
 def install(args: argparse.Namespace) -> int:
     notes: list[str] = []
     dry = args.dry_run
     shim = bin_path()
     if shim.exists() and MARKER not in shim.read_text(errors="replace"):
         raise SystemExit(f"lane: {shim} exists and is not Effortlane's; nothing changed.")
+    edit_settings = args.global_claude or args.model or args.effort or args.subagent_model
     settings_path = claude_dir() / "settings.json"
-    settings = {} if args.no_claude else _load_settings(settings_path)  # validate before any write
+    settings = _load_settings(settings_path) if edit_settings else {}  # validate before any write
     ensure_key(dry, notes)
     if not dry:
         target = share_dir()
@@ -606,7 +643,21 @@ def install(args: argparse.Namespace) -> int:
         _atomic_write(shim, f'#!/bin/sh\n# {MARKER}\nexec python3 "{target / "lane.py"}" "$@"\n', 0o755)
     notes.append(f"launcher: {shim}")
 
-    if not args.no_claude:
+    if not args.no_shell:
+        rc = shell_rc()
+        if rc is None:
+            notes.append("shell: not zsh/bash - add this to your shell config:\n" + shell_block())
+        else:
+            current = rc.read_text() if rc.exists() else ""
+            updated = _strip_block(current).rstrip("\n") + ("\n\n" if current.strip() else "") + shell_block()
+            if updated != current and not dry:
+                if rc.exists():
+                    shutil.copy2(rc, rc.with_name(f"{rc.name}.{MARKER}.bak"))
+                _atomic_write(rc, updated)
+            notes.append(f"shell: `claude` now goes through Effortlane ({rc}); open a new terminal. "
+                         "`claude-native` bypasses it.")
+
+    if args.global_claude:
         agents_dir = claude_dir() / "agents"
         for source in sorted(BUNDLED_AGENTS.glob("*.md")):
             dest = agents_dir / source.name
@@ -619,11 +670,11 @@ def install(args: argparse.Namespace) -> int:
                 agents_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, dest)
             notes.append(f"subagent: {dest}")
-        before = json.dumps(settings, sort_keys=True)
-        hooks = settings.setdefault("hooks", {})
-        prompt_hooks = hooks.setdefault("UserPromptSubmit", [])
+        prompt_hooks = settings.setdefault("hooks", {}).setdefault("UserPromptSubmit", [])
         prompt_hooks[:] = [e for e in prompt_hooks if not _is_our_hook(e)]
         prompt_hooks.append({"hooks": [{"type": "command", "command": _hook_command(), "timeout": 5}]})
+    if edit_settings:
+        before = json.dumps(_load_settings(settings_path), sort_keys=True)
         if args.model:
             settings["model"] = args.model
         if args.effort:
@@ -632,35 +683,38 @@ def install(args: argparse.Namespace) -> int:
             settings.setdefault("env", {})["CLAUDE_CODE_SUBAGENT_MODEL"] = args.subagent_model
         if json.dumps(settings, sort_keys=True) != before:
             _save_settings(settings_path, settings, dry, notes)
-        if _expensive_default(settings.get("model")):
-            notes.append(f"note: Claude's default model is still {settings['model']!r}; "
-                         "`lane install --model sonnet` makes new sessions cheap by default.")
     print(("Dry run, nothing written:\n  " if dry else "Installed:\n  ") + "\n  ".join(notes))
     if not dry and str(shim.parent) not in os.environ.get("PATH", "").split(":"):
         print(f"Add {shim.parent} to PATH to use `lane`.")
+    if not dry and not args.no_shell:
+        print("Next: `lane trial start` to compare control vs lanes on your real work.")
     return 0
 
 
 def doctor() -> int:
+    import lane_claude
     settings = _load_settings(claude_dir() / "settings.json")
-    prompt_hooks = (settings.get("hooks") or {}).get("UserPromptSubmit") or []
+    rc = shell_rc()
     checks = [
         ("Jev key", bool(read_key()), f"run `lane install` or export {KEY_ENV}"),
-        ("claude hook", any(_is_our_hook(e) for e in prompt_hooks), "run `lane install`"),
+        ("`claude` shell function", bool(rc and rc.exists() and SHELL_BEGIN in rc.read_text()), "run `lane install`"),
+        ("installed runtime", (share_dir() / "lane.py").is_file(), "run `lane install`"),
     ]
-    for source in sorted(BUNDLED_AGENTS.glob("*.md")):
-        dest = claude_dir() / "agents" / source.name
-        checks.append((f"subagent {source.stem}", dest.exists(), "run `lane install`"))
     for agent in AGENTS:
         checks.append((f"{agent} on PATH", bool(shutil.which(agent)), "optional"))
     failed = 0
     for name, ok, fix in checks:
         print(f"{'ok ' if ok else '!! '} {name}" + ("" if ok else f"  -> {fix}"))
         failed += not ok and fix != "optional"
-    model = settings.get("model")
-    if _expensive_default(model):
-        print(f"!!  Claude default model is {model!r}: every new session runs on it. "
-              "`lane install --model sonnet` (or opusplan) is the biggest single saving.")
+    data = lane_claude.trial()
+    if lane_claude.trial_active():
+        print(f"ok  trial running until {time.strftime('%Y-%m-%d %H:%M', time.localtime(data['ends']))}")
+    elif data:
+        print("ok  trial finished - `lane trial report`")
+    else:
+        print(f"--  no trial; `claude` mode: {lane_claude.resolve_mode(None, load_config())}")
+    if _expensive_default(settings.get("model")):
+        print(f"--  Claude's own default model is {settings['model']!r}; the control arm keeps it.")
     return 1 if failed else 0
 
 
@@ -685,10 +739,14 @@ def uninstall(args: argparse.Namespace) -> int:
     if shim.exists() and MARKER in shim.read_text(errors="replace"):
         shim.unlink()
         notes.append(f"removed {shim}")
+    rc = shell_rc()
+    if rc and rc.exists() and SHELL_BEGIN in rc.read_text():
+        _atomic_write(rc, _strip_block(rc.read_text()).rstrip("\n") + "\n")
+        notes.append(f"removed the `claude` function from {rc}; open a new terminal")
     if share_dir().exists() and not (share_dir() / ".git").exists():
         shutil.rmtree(share_dir())
         notes.append(f"removed {share_dir()}")
-    notes.append("kept: model/effort settings, route log, lane.json")
+    notes.append("kept: model/effort settings, route and trial logs, lane.json")
     print("Uninstalled:\n  " + "\n  ".join(notes))
     return 0
 
@@ -697,6 +755,12 @@ def uninstall(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:2] == ["wrap", "claude"]:  # raw passthrough: every argument belongs to Claude
+        import lane_claude
+        return lane_claude.wrap(argv[2:])
+    if argv[:1] == ["statusline"]:
+        import lane_claude
+        return lane_claude.statusline()
     native: list[str] = []
     if "--" in argv:
         split = argv.index("--")
@@ -715,18 +779,25 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("route", help="show which lane a task would get (asks Jev)")
     p.add_argument("prompt", nargs="+")
     p.add_argument("--local", action="store_true", help="use only the local fallback rules")
-    sub.add_parser("hook", help="Claude Code UserPromptSubmit hook (reads JSON on stdin)")
+    p = sub.add_parser("hook", help="Claude Code UserPromptSubmit hook (reads JSON on stdin)")
+    p.add_argument("--mode", choices=("auto", "shadow"), default="auto")
+    p = sub.add_parser("trial", help="randomized control-vs-lanes trial for `claude`")
+    p.add_argument("action", choices=("start", "status", "stop", "report"))
+    p.add_argument("--days", type=float, help="start: trial length (default 14); report: last N days")
+    p.add_argument("--json", action="store_true", help="report: machine-readable")
     sub.add_parser("doctor", help="check key, agents, hook and defaults")
     p = sub.add_parser("stats", help="lane counts from the local route log")
     p.add_argument("--days", type=float, default=7)
     p = sub.add_parser("config", help="print the effective configuration")
     p.add_argument("--write", action="store_true", help="write the defaults if no config exists")
-    p = sub.add_parser("install", help="install `lane`, Claude subagents and the prompt hook")
-    p.add_argument("--model", help="also set Claude's default model (e.g. sonnet, opusplan)")
+    p = sub.add_parser("install", help="install `lane`, the Jev key and the seamless `claude` shell function")
+    p.add_argument("--no-shell", action="store_true", help="skip the `claude` shell function")
+    p.add_argument("--global", dest="global_claude", action="store_true",
+                   help="also put the subagents and prompt hook into ~/.claude for every Claude session")
+    p.add_argument("--model", help="also set Claude's own default model (e.g. sonnet, opusplan)")
     p.add_argument("--effort", choices=("low", "medium", "high", "xhigh"), help="also set Claude's default effort")
     p.add_argument("--subagent-model", help="model for subagents without their own (CLAUDE_CODE_SUBAGENT_MODEL)")
-    p.add_argument("--no-claude", action="store_true", help="only install the launcher")
-    p.add_argument("--force", action="store_true", help="replace differing subagent files (backed up)")
+    p.add_argument("--force", action="store_true", help="--global: replace differing subagent files (backed up)")
     p.add_argument("--dry-run", action="store_true")
     sub.add_parser("uninstall", help="remove what install added; keeps model settings")
     args = parser.parse_args(argv)
@@ -748,7 +819,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {agent:<7} model={model or 'native'} effort={effort or 'native'}")
         return 0
     if args.command == "hook":
-        return hook_with_deadline()
+        return hook_with_deadline(args.mode)
+    if args.command == "trial":
+        import lane_claude
+        if args.action == "start":
+            return lane_claude.trial_start(args.days or 14)
+        if args.action == "stop":
+            return lane_claude.trial_stop()
+        if args.action == "report":
+            return lane_claude.report(args.days, args.json)
+        return lane_claude.trial_status()
     if args.command == "doctor":
         return doctor()
     if args.command == "stats":

@@ -216,7 +216,8 @@ class LaneTest(unittest.TestCase):
     # --- install ------------------------------------------------------------------
 
     def install_args(self, **kw):
-        base = dict(model=None, effort=None, subagent_model=None, no_claude=False, force=False, dry_run=False)
+        base = dict(model=None, effort=None, subagent_model=None, global_claude=True, no_shell=True,
+                    force=False, dry_run=False)
         base.update(kw)
         return argparse.Namespace(**base)
 
@@ -267,6 +268,30 @@ class LaneTest(unittest.TestCase):
         with self.assertRaises(SystemExit), mock.patch("sys.stdout", io.StringIO()):
             lane.install(self.install_args())
         self.assertEqual(settings.read_text(), "{broken")
+
+    def test_shell_function_install_is_idempotent_and_removable(self):
+        os.environ["SHELL"] = "/bin/zsh"
+        rc = self.home / ".zshrc"
+        rc.write_text("alias cc='claude'\n")
+        with mock.patch("sys.stdout", io.StringIO()):
+            lane.install(self.install_args(global_claude=False, no_shell=False))
+            lane.install(self.install_args(global_claude=False, no_shell=False))
+        text = rc.read_text()
+        self.assertEqual(text.count(lane.SHELL_BEGIN), 1)
+        self.assertIn("alias cc='claude'", text)
+        self.assertIn("wrap claude", text)
+        self.assertFalse((self.home / "claude" / "settings.json").exists())  # ~/.claude untouched
+        with mock.patch("sys.stdout", io.StringIO()):
+            lane.uninstall(argparse.Namespace())
+        self.assertEqual(rc.read_text(), "alias cc='claude'\n")
+
+    def test_hook_shadow_mode_records_without_hint_and_flags_rework(self):
+        out = io.StringIO()
+        event = {"prompt": "still broken, the login page не работает", "session_id": "s9"}
+        lane.hook(io.StringIO(json.dumps(event)), out, jev_answer("deep"), mode="shadow")
+        self.assertEqual(out.getvalue(), "")
+        row = self.routes()[-1]
+        self.assertEqual((row["tier"], row["mode"], row["rework"]), ("deep", "shadow", True))
 
     def test_bundled_subagents_have_required_frontmatter(self):
         for path in lane.BUNDLED_AGENTS.glob("*.md"):
