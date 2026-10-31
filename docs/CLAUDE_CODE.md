@@ -1,5 +1,9 @@
 # Claude Code Shadow (experimental)
 
+> To actually route Claude Code (model and effort per launch, plus Haiku/Sonnet/Opus
+> subagents inside a session), use [lanes](LANES.md). This page covers the
+> observe-only Shadow adapter.
+
 `effortlane claude [native Claude arguments...]` is an experimental Claude Code
 adapter. It starts the installed `claude` binary with its existing native login
 and tools. It does not modify `~/.claude/settings.json`, aliases, PATH,
