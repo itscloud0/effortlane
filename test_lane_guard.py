@@ -122,11 +122,14 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"].endswith(" pretool"))
         self.assertEqual(settings["hooks"]["PreToolUse"][0]["matcher"], "Agent|Task")
         self.assertIn("--append-system-prompt", cmd)
+        self.assertEqual(cmd[cmd.index("--autocompact") + 1], "200000")
         cmd, _ = lane_claude.plan_launch(["--effortlane-shadow"], config, "/w", rng)
         self.assertNotIn("PreToolUse", json.loads(cmd[cmd.index("--settings") + 1])["hooks"])
         self.assertNotIn("--append-system-prompt", cmd)
-        cmd, _ = lane_claude.plan_launch(["--effortlane-auto", "--append-system-prompt", "mine"], config, "/w", rng)
-        self.assertEqual(cmd.count("--append-system-prompt"), 1)
+        self.assertNotIn("--autocompact", cmd)
+        cmd, _ = lane_claude.plan_launch(["--effortlane-auto", "--append-system-prompt", "mine",
+                                          "--autocompact", "auto"], config, "/w", rng)
+        self.assertEqual((cmd.count("--append-system-prompt"), cmd.count("--autocompact")), (1, 1))
 
     # --- xray ------------------------------------------------------------------------
 

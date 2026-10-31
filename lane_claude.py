@@ -277,6 +277,9 @@ def plan_launch(args: list[str], config: dict, cwd: str, rng: random.Random | No
         cmd += ["--agents", json.dumps(agents_json(), separators=(",", ":"))]
         if not any(a.startswith("--append-system-prompt") or a.startswith("--system-prompt") for a in rest):
             cmd += ["--append-system-prompt", DELEGATION]
+        window = (config.get("guards") or {}).get("compact_window")
+        if isinstance(window, int) and window > 0 and not any(a.startswith("--autocompact") for a in rest):
+            cmd += ["--autocompact", str(window)]
     mode_name = "auto" if arm == "lanes" else "shadow"
     cmd += ["--settings", json.dumps(settings_json(mode_name, config), separators=(",", ":"))]
     record = {"event": "session", "arm": arm, "mode": mode, "resumed": resuming,

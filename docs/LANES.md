@@ -79,7 +79,7 @@ trial measures what actually happens.
 
 ## Cost guards
 
-The lanes arm also turns on two guards (`lane_guard.py`):
+The lanes arm also turns on three guards:
 
 - **Reload warning.** Every request re-sends the whole history; the prompt cache makes
   that cheap until it expires (1 h for Claude Code subscriptions, 5 min otherwise). The
@@ -91,9 +91,19 @@ The lanes arm also turns on two guards (`lane_guard.py`):
   model, a named agent (`scout`, `architect`, your own) and forks are left alone. The
   session also gets a short instruction to delegate with a brief instead of forking the
   whole conversation.
+- **Earlier compaction.** Opus 5.5 and Sonnet 5.5 have a 1M window, so a session can
+  grow to 400k+ before Claude Code compacts it, and every step re-reads all of it. The
+  lanes arm launches with `--autocompact 200000`. Replaying a week of real transcripts,
+  compacting at 200k instead of 400k cost about 15% less on main sessions, after paying
+  for the summaries and the rebuilt cache. Lower is not better: at 150k the extra
+  compactions eat the gain. Your own `--autocompact` wins.
+
+Capping tool output was measured too and left out: re-reading old command output was
+under 10% of main-session cost, and a 12k-character cap would have saved about 1%.
 
 Tune or disable them in `lane.json`:
-`"guards": {"reload_tokens": 200000, "subagent_model": "haiku"}`, or `"guards": false`.
+`"guards": {"reload_tokens": 200000, "subagent_model": "haiku", "compact_window": 300000}`,
+or `"guards": false`.
 
 ## Trial and exact metrics
 

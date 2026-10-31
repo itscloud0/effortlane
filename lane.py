@@ -65,8 +65,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "rules": [],
     # Claude Code prompt hook: add a one-line delegation hint for light and deep prompts.
     "hints": True,
-    # Lanes-arm cost guards (lane_guard.py); "guards": false turns both off.
-    "guards": {"reload_tokens": 120_000, "subagent_model": "sonnet"},
+    # Lanes-arm cost guards (lane_guard.py, lane_claude.py); "guards": false turns them off.
+    "guards": {"reload_tokens": 120_000, "subagent_model": "sonnet", "compact_window": 200_000},
 }
 CODEX_ROLES = ("luna", "terra", "sol", "astra")
 

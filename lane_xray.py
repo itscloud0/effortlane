@@ -187,7 +187,7 @@ def xray(days: float = 7, as_json: bool = False) -> int:
                    "turn off skills, plugins and MCP servers a project doesn't use"))
     levers.append((t["long_cost"] * 0.3,
                    f"Requests above {LONG_CONTEXT // 1000}k tokens cost {money(t['long_cost'])} ({pct(t['long_cost'])}).",
-                   "one task per session; /compact past ~150k (estimate: about a third of that)"))
+                   "one task per session; lanes compacts at 200k instead of 400k (estimate)"))
     for i, (saving, what, how) in enumerate(sorted(levers, key=lambda x: -x[0]), 1):
         print(f"  {i}. up to {money(saving)}  {what}\n     -> {how}")
     print("\nRead locally from Claude Code transcripts; nothing is stored or sent. "
