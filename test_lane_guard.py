@@ -175,9 +175,21 @@ class GuardTest(unittest.TestCase):
         self.assertAlmostEqual(t["sub_expensive"], 10_000 * 8 / 1e6 + 10 * 4 / 1e6)
         self.assertAlmostEqual(t["sub_cheaper"], 10_000 * 4 / 1e6 + 10 * 2 / 1e6)
         self.assertAlmostEqual(sum(t["parts"].values()), t["cost"])
+        self.assertAlmostEqual(t["image_cost"], lane_xray.IMAGE_TOKENS * 1 * 0.2 / 1e6)  # carried by r2 into r3
+        self.assertAlmostEqual(t["thinking"], 3 * 1000 * 20 / 1e6)  # no visible text: all output is thinking
         with mock.patch("sys.stdout", io.StringIO()) as out:
             lane_xray.xray(7)
         self.assertIn("cache reloads after breaks", out.getvalue())
+
+    def test_memory_tokens_follow_folders_and_imports(self):
+        project = self.home / "work" / "app"
+        project.mkdir(parents=True)
+        (self.home / "claude").mkdir(exist_ok=True)
+        (self.home / "claude" / "CLAUDE.md").write_text("u" * 400)
+        (self.home / "work" / "CLAUDE.md").write_text("w" * 400)
+        (project / "CLAUDE.md").write_text("@AGENTS.md\n")
+        (project / "AGENTS.md").write_text("a" * 4000)
+        self.assertEqual(lane_xray.memory_tokens(str(project), home=self.home), (400 + 400 + 11 + 4000) // 4)
 
 
 if __name__ == "__main__":

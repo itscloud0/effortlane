@@ -17,6 +17,8 @@ from lane_guard import _ts
 
 CHEAPER = "claude-sonnet-5-5"
 LONG_CONTEXT = 150_000
+IMAGE_TOKENS = 1_600  # a screenshot near the 1.15 MP resize limit
+MEMORY_FILES = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 
 
 def _split(model: str, usage: dict) -> dict[str, float] | None:
@@ -38,6 +40,42 @@ def _quantile(values: list[int], q: float) -> int:
     return values[int(q * (len(values) - 1))] if values else 0
 
 
+def _later_steps(contexts: list[int], index: int) -> int:
+    """Requests after `index` that still carry what was added there (until a compaction)."""
+    steps = 0
+    for prev, ctx in zip(contexts[index:], contexts[index + 1:]):
+        if ctx < 0.6 * prev:
+            break
+        steps += 1
+    return steps
+
+
+def memory_tokens(cwd: str, home: Path | None = None) -> int:
+    """Tokens of the CLAUDE.md files Claude Code loads in `cwd`: user, every folder up to it,
+    and one level of @imports. An estimate (characters / 4)."""
+    home = home or Path.home()
+    folder = Path(cwd)
+    paths = [lane.claude_dir() / "CLAUDE.md"]
+    for parent in [folder, *folder.parents]:
+        paths += [parent / name for name in MEMORY_FILES]
+        if parent == home or parent == parent.parent:
+            break
+    chars = 0
+    for path in dict.fromkeys(paths):
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        chars += len(text)
+        for line in text.splitlines():
+            if line.startswith("@") and len(line) > 1:
+                try:
+                    chars += len((path.parent / line[1:].strip()).expanduser().read_text(errors="replace"))
+                except OSError:
+                    pass
+    return chars // 4
+
+
 def scan(days: float, root: Path | None = None) -> dict:
     since = time.time() - days * 86400
     projects = root or lane.claude_dir() / "projects"
@@ -48,7 +86,8 @@ def scan(days: float, root: Path | None = None) -> dict:
                          "main": 0.0, "sub": 0.0, "by_model": {}, "contexts": [], "starts": [],
                          "reload": {"requests": 0, "cost": 0.0, "excess": 0.0},
                          "sub_expensive": 0.0, "sub_cheaper": 0.0, "main_expensive": 0.0, "main_cheaper": 0.0,
-                         "overhead_cost": 0.0, "long_cost": 0.0, "tools": {}, "images": 0, "sessions": {}}
+                         "overhead_cost": 0.0, "long_cost": 0.0, "tools": {}, "images": 0, "sessions": {},
+                         "thinking": 0.0, "image_cost": 0.0, "projects": {}}
     for path, is_sub in files:
         try:
             if path.stat().st_mtime < since:
@@ -58,10 +97,20 @@ def scan(days: float, root: Path | None = None) -> dict:
             continue
         session = path.parent.parent.name if is_sub else path.stem
         names: dict[str, str] = {}
-        start = prev = None
+        start = prev = cwd = None
+        contexts: list[int] = []  # every request of this file, for what later steps carry
+        images: list[int] = []  # index into contexts at which each image arrived
+        visible: dict[Any, int] = {}  # characters of text and tool input per request
+        outputs: dict[Any, tuple[int, float]] = {}  # output tokens and rate per request
+        read_rate = 0.0
         with handle:
             for line in handle:
-                if '"usage"' not in line and '"tool_' not in line:
+                if cwd is None and '"cwd"' in line:
+                    try:
+                        cwd = json.loads(line).get("cwd")
+                    except (ValueError, AttributeError):
+                        pass
+                if '"usage"' not in line and '"tool_' not in line and '"image"' not in line:
                     continue
                 try:
                     row = json.loads(line)
@@ -71,9 +120,16 @@ def scan(days: float, root: Path | None = None) -> dict:
                 if not isinstance(message, dict):
                     continue
                 content = message.get("content")
+                key = row.get("requestId") or message.get("id")
                 for block in content if isinstance(content, list) else ():
                     if not isinstance(block, dict):
                         continue
+                    if message.get("role") == "assistant" and block.get("type") in ("text", "tool_use"):
+                        size = len(block.get("text") or "") + len(json.dumps(block.get("input") or ""))
+                        visible[key] = visible.get(key, 0) + size
+                    if block.get("type") == "image":
+                        images.append(len(contexts))
+                        t["images"] += 1
                     if block.get("type") == "tool_use":
                         name = str(block.get("name") or "?")
                         names[block.get("id")] = "mcp:" + name.split("__")[1] if name.startswith("mcp__") else name
@@ -83,6 +139,7 @@ def scan(days: float, root: Path | None = None) -> dict:
                         items = inner if isinstance(inner, list) else [{"type": "text", "text": inner or ""}]
                         for item in items:
                             if isinstance(item, dict) and item.get("type") == "image":
+                                images.append(len(contexts))
                                 t["images"] += 1
                             elif isinstance(item, dict):
                                 t["tools"][tool] = t["tools"].get(tool, 0) + len(str(item.get("text") or "")) // 4
@@ -91,7 +148,6 @@ def scan(days: float, root: Path | None = None) -> dict:
                 stamp = _ts(row.get("timestamp"))
                 if not isinstance(usage, dict) or model.startswith("<") or stamp is None:
                     continue
-                key = row.get("requestId") or message.get("id")
                 if key in seen:
                     continue
                 seen.add(key)
@@ -105,6 +161,10 @@ def scan(days: float, root: Path | None = None) -> dict:
                     start = context
                 if stamp < since or parts is None:
                     continue
+                contexts.append(context)
+                rates = lane_claude.rates(model)
+                read_rate = rates[2]
+                outputs[key] = (usage.get("output_tokens") or 0, rates[1])
                 cost = sum(parts.values())
                 t["cost"] += cost
                 t["requests"] += 1
@@ -124,14 +184,28 @@ def scan(days: float, root: Path | None = None) -> dict:
                     t["contexts"].append(context)
                     if first:
                         t["starts"].append(context)
-                    t["overhead_cost"] += min(start, context) * lane_claude.rates(model)[2] / 1e6
+                    t["overhead_cost"] += min(start, context) * rates[2] / 1e6
+                    if cwd:
+                        project = t["projects"].setdefault(cwd, [0, 0.0])
+                        project[0] += 1
+                        project[1] += rates[2]
                 if not first and context > 30_000 and write > 0.5 * context and gap and gap > 300:
                     t["reload"]["requests"] += 1
                     t["reload"]["cost"] += cost
-                    t["reload"]["excess"] += max(0.0, parts["write"] - write * lane_claude.rates(model)[2] / 1e6)
+                    t["reload"]["excess"] += max(0.0, parts["write"] - write * rates[2] / 1e6)
+        # Thinking is billed as output but not stored as text: output beyond what is visible.
+        for key, (tokens, rate) in outputs.items():
+            t["thinking"] += max(0, tokens - visible.get(key, 0) // 4) * rate / 1e6
+        for index in images:
+            if index < len(contexts):
+                t["image_cost"] += IMAGE_TOKENS * _later_steps(contexts, index) * read_rate / 1e6
     costs = sorted(t["sessions"].values(), reverse=True)
     t["top_decile_share"] = sum(costs[:max(1, len(costs) // 10)]) / t["cost"] if t["cost"] else 0.0
     t["session_count"] = len(costs)
+    memory = [(memory_tokens(cwd), n, rate_sum) for cwd, (n, rate_sum) in t["projects"].items()]
+    t["memory"] = {"cost": sum(tok * rate_sum / 1e6 for tok, _, rate_sum in memory),
+                   "largest": max((tok for tok, _, _ in memory), default=0)}
+    del t["projects"]  # folder paths stay local, out of --json too
     return t
 
 
@@ -166,6 +240,9 @@ def xray(days: float = 7, as_json: bool = False) -> int:
     tools = sorted(t["tools"].items(), key=lambda kv: -kv[1])[:5]
     print("  tool output                     " + ", ".join(f"{k} {v / 1e6:.1f}M" for k, v in tools)
           + f" tokens · {t['images']:,} images")
+    print(f"  CLAUDE.md and memory files      up to {t['memory']['largest'] // 1000}k tokens per request "
+          f"({money(t['memory']['cost'])} over the period)")
+    print(f"  thinking (billed as output)     {money(t['thinking'])}, {pct(t['thinking'])} of the total")
     print(f"  biggest 10% of sessions         {100 * t['top_decile_share']:.0f}% of the cost\n")
     print("What would cut it (same tokens repriced; a cheaper model may take more steps)")
     levers = []
@@ -188,6 +265,19 @@ def xray(days: float = 7, as_json: bool = False) -> int:
     levers.append((t["long_cost"] * 0.3,
                    f"Requests above {LONG_CONTEXT // 1000}k tokens cost {money(t['long_cost'])} ({pct(t['long_cost'])}).",
                    "one task per session; lanes compacts at 300k instead of 400k (estimate)"))
+    if t["thinking"]:
+        levers.append((t["thinking"] / 2,
+                       f"Thinking cost {money(t['thinking'])}; one level lower effort on routine turns "
+                       "roughly halves it there.", "/effort medium for routine work, high or xhigh for hard parts"))
+    if t["image_cost"]:
+        levers.append((t["image_cost"],
+                       f"{t['images']:,} images were re-sent on later steps for {money(t['image_cost'])} "
+                       f"(about {IMAGE_TOKENS:,} tokens each).",
+                       "crop screenshots to the part that matters; /clear after visual work"))
+    if t["memory"]["cost"]:
+        levers.append((t["memory"]["cost"] / 2,
+                       f"CLAUDE.md and memory files ride on every request: {money(t['memory']['cost'])}.",
+                       "keep CLAUDE.md under ~200 lines; move rare workflows into skills"))
     for i, (saving, what, how) in enumerate(sorted(levers, key=lambda x: -x[0]), 1):
         print(f"  {i}. up to {money(saving)}  {what}\n     -> {how}")
     print("\nRead locally from Claude Code transcripts; nothing is stored or sent. "

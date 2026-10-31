@@ -69,10 +69,13 @@ sizes only; nothing is stored or sent) and shows:
 - the bill split into re-reading history (cache reads), cache writes, output and input,
   and main sessions vs subagents, priced per model;
 - the typical request size, what is loaded before your first prompt (system prompt,
-  tools, skills, MCP servers, CLAUDE.md), the largest tool outputs and image count;
+  tools, skills, MCP servers, CLAUDE.md), the largest tool outputs and image count, the
+  CLAUDE.md and memory files loaded in each project (sizes only, paths never printed),
+  and thinking (output tokens beyond the text and tool calls stored in the transcript);
 - the levers ranked by what they would have saved on those same tokens: subagents on a
-  cheaper model, cache reloads after breaks, the main session on a cheaper model, a
-  smaller start-up load, and shorter sessions.
+  cheaper model, cache reloads after breaks, the main session on a cheaper model, lower
+  effort on routine turns, a smaller start-up load, images re-sent on later steps,
+  CLAUDE.md size, and shorter sessions.
 
 Repricing the same tokens is an upper bound: a cheaper model may take more steps. The
 trial measures what actually happens.
