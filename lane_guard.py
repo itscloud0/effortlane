@@ -4,7 +4,8 @@ reload    The first prompt after the prompt cache expired re-sends the whole his
           full input price. Above a size threshold, block that prompt once and say what it
           will cost; sending it again goes through.
 subagent  A subagent launched without its own model inherits the session's model. Give
-          general-purpose subagents a cheaper default; explicit choices are kept.
+          general-purpose subagents Sonnet and the read-only Explore agent Haiku;
+          explicit choices and named agents are kept.
 context   Above a size, the status line shows what every step re-sends and how much
           cheaper /clear would make a new task.
 
@@ -162,16 +163,18 @@ def pretool(stdin=None, stdout=None) -> int:
         tool_input = event.get("tool_input")
         if event.get("tool_name") not in ("Agent", "Task") or not isinstance(tool_input, dict):
             return 0
-        model = settings(lane.load_config()).get("subagent_model")
+        guards = settings(lane.load_config())
         kind = str(tool_input.get("subagent_type") or "")
-        if not model or tool_input.get("model") or kind not in GENERIC_AGENTS:
+        model = guards.get("explore_model") if kind == "Explore" else \
+            guards.get("subagent_model") if kind in GENERIC_AGENTS else None
+        if not model or tool_input.get("model"):
             return 0
         lane.log_route({"event": "guard", "kind": "subagent", "agent": "claude", "to": model,
                         "session": lane.session_digest(str(event.get("session_id") or ""))})
         json.dump({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "allow",
-            "permissionDecisionReason": f"effortlane: generic subagent defaults to {model}",
+            "permissionDecisionReason": f"effortlane: {kind or 'generic'} subagent defaults to {model}",
             "updatedInput": dict(tool_input, model=model),
         }}, stdout)
     except Exception:

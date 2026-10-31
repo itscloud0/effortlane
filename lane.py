@@ -66,8 +66,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Claude Code prompt hook: add a one-line delegation hint for light and deep prompts.
     "hints": True,
     # Lanes-arm cost guards (lane_guard.py, lane_claude.py); "guards": false turns them off.
-    "guards": {"reload_tokens": 120_000, "subagent_model": "sonnet", "compact_window": 300_000,
-               "context_note_tokens": 100_000},
+    "guards": {"reload_tokens": 120_000, "subagent_model": "sonnet", "explore_model": "haiku",
+               "compact_window": 300_000, "context_note_tokens": 100_000},
+    # Main model of the Claude Code lanes arm. Opus keeps the main session as strong as the
+    # control arm, so the trial measures the guards and cheaper helpers; {"model": null}
+    # falls back to the standard lane (Sonnet). A null effort keeps Claude's own default.
+    "lanes_arm": {"model": "opus", "effort": None},
 }
 CODEX_ROLES = ("luna", "terra", "sol", "astra")
 
@@ -289,6 +293,8 @@ def load_config() -> dict:
         config["guards"] = {}
     elif isinstance(user.get("guards"), dict):
         config["guards"].update(user["guards"])
+    if isinstance(user.get("lanes_arm"), dict):
+        config["lanes_arm"].update(user["lanes_arm"])
     return config
 
 

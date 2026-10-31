@@ -47,7 +47,7 @@ Type `claude` as before. One line on stderr says what this session is:
 | Mode | What runs | Set with |
 |---|---|---|
 | shadow (default) | your normal Claude; Jev records the lane it would pick | `claude_mode` in `lane.json` |
-| lanes | Sonnet · medium, `scout`/`builder`/`architect`, Jev delegation hints, [cost guards](#cost-guards) | `claude --effortlane-auto` |
+| lanes | Opus main (your effort), `scout`/`builder`/`architect`, Jev delegation hints, [cost guards](#cost-guards) | `claude --effortlane-auto` |
 | trial | random per new session: control (shadow) or lanes | `lane trial start` |
 | off | plain Claude | `claude --effortlane-off`, `claude-native` |
 
@@ -89,11 +89,11 @@ The lanes arm also turns on these guards:
   first prompt after it expired, in a session above 120k tokens, is blocked once with
   what it will cost (for Opus about 40 normal steps). Sending it again goes through;
   `/clear` with a short restatement is cheapest.
-- **Cheaper generic subagents.** A general-purpose subagent started without a model
-  inherits the session's model. A `PreToolUse` hook gives it Sonnet instead; an explicit
-  model, a named agent (`scout`, `architect`, your own) and forks are left alone. The
-  session also gets a short instruction to delegate with a brief instead of forking the
-  whole conversation.
+- **Cheaper subagents.** A subagent started without a model inherits the session's
+  model. A `PreToolUse` hook gives a general-purpose subagent Sonnet and the read-only
+  `Explore` agent Haiku (in one real week: general-purpose $854 on Opus vs $639 on
+  Sonnet; Explore $49 on Sonnet vs $2 on Haiku). An explicit model, a named agent
+  (`scout`, `architect`, your own) and forks are left alone.
 - **Earlier compaction.** Opus 5.5 and Sonnet 5.5 have a 1M window, so a session can
   grow to 400k+ before Claude Code compacts it, and every step re-reads all of it. The
   lanes arm launches with `--autocompact 300000`. Replaying a week of real transcripts,
@@ -118,7 +118,7 @@ Capping tool output was measured too and left out: re-reading old command output
 under 10% of main-session cost, and a 12k-character cap would have saved about 1%.
 
 Tune or disable them in `lane.json`:
-`"guards": {"reload_tokens": 200000, "subagent_model": "haiku", "compact_window": 200000, "context_note_tokens": 150000}`,
+`"guards": {"reload_tokens": 200000, "subagent_model": "haiku", "explore_model": "sonnet", "compact_window": 200000}`,
 or `"guards": false`.
 
 ## Trial and exact metrics
@@ -176,8 +176,11 @@ model it started with. The lanes arm adds what can work inside a session:
 
 - **Subagents** (`~/.claude/agents/`): `scout` (Haiku, low, read-only lookups),
   `builder` (Sonnet, medium, bounded edits) and `architect` (Opus, high, read-only
-  diagnosis and plans). Their descriptions tell the main agent when to use each, so a
-  Sonnet session can borrow Opus for the hard part only.
+  diagnosis and plans). Their descriptions tell the main agent when to use each.
+- **Main model**: Opus by default, at Claude's own effort, so the lanes arm is as strong
+  as the control arm and the trial measures the guards and cheaper helpers. For an
+  all-Sonnet arm (cheaper, riskier) set `"lanes_arm": {"model": null}` in `lane.json`;
+  it then starts on the standard lane, Sonnet at medium effort.
 - **Prompt hook** (`UserPromptSubmit`): asks Jev about each prompt (2 s timeout,
   3 s hard limit) and adds one line of context for light or deep prompts, pointing
   at `scout` or `architect`. Standard prompts add nothing. Disable hints with

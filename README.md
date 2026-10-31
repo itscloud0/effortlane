@@ -54,7 +54,7 @@ lane codex "rename getUser to fetchUser"   # Codex and Hermes: per-launch lanes
 | standard | Sonnet · medium | Terra · medium | Terra |
 | deep | Opus · high | Sol · high | Sol |
 
-A Claude session can't switch models mid-session, so the lanes arm starts on Sonnet with `scout` (Haiku), `builder` (Sonnet) and `architect` (Opus) subagents, and Jev hints which to use: Opus only for the hard part. `claude-native` bypasses everything; native `--model`/`--effort` always win; if Jev is unreachable, local rules pick the lane. [Lanes guide](docs/LANES.md)
+A Claude session can't switch models mid-session, so the lanes arm keeps Opus as the main model and saves around it: generic subagents on Sonnet, search on Haiku, `scout` (Haiku), `builder` (Sonnet) and `architect` (Opus) subagents with Jev hints, and [cost guards](docs/LANES.md#cost-guards). Set `"lanes_arm": {"model": null}` for an all-Sonnet arm. `claude-native` bypasses everything; native `--model`/`--effort` always win; if Jev is unreachable, local rules pick the lane. [Lanes guide](docs/LANES.md)
 
 ## Codex Auto and Shadow
 

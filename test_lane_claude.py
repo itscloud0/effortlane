@@ -63,7 +63,10 @@ class LaneClaudeTest(unittest.TestCase):
     def test_lanes_arm_starts_on_standard_lane_with_subagents_and_hints(self):
         cmd, record = self.plan(["--effortlane-auto", "fix the login"])
         self.assertEqual((record["arm"], self.flag(cmd, "--model"), self.flag(cmd, "--effort")),
-                         ("lanes", "sonnet", "medium"))
+                         ("lanes", "opus", None))  # Opus main at Claude's own effort
+        self.config["lanes_arm"] = {"model": None}
+        self.assertEqual(self.flag(self.plan(["--effortlane-auto"])[0], "--model"), "sonnet")
+        self.config["lanes_arm"] = {"model": "opus", "effort": None}
         agents = json.loads(self.flag(cmd, "--agents"))
         self.assertEqual(set(agents), {"scout", "builder", "architect"})
         self.assertEqual((agents["architect"]["model"], agents["scout"]["tools"]), ("opus", ["Read", "Grep", "Glob", "Bash"]))
@@ -99,7 +102,7 @@ class LaneClaudeTest(unittest.TestCase):
         cmd, record = self.plan(["--resume", session])
         self.assertEqual((record["arm"], record["resumed"]), ("lanes", True))
         self.assertNotIn("--session-id", cmd)
-        self.assertEqual(self.flag(cmd, "--model"), "sonnet")
+        self.assertEqual(self.flag(cmd, "--model"), "opus")
         project = lane_claude._project_dir("/work/my app")
         project.mkdir(parents=True)
         (project / f"{session}.jsonl").write_text("")

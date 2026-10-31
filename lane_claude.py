@@ -6,7 +6,7 @@ which execs the real Claude Code with the lane harness injected through its own
 
 Trial arms, assigned per new session:
   control  your normal Claude setup; Jev only records what it would pick
-  lanes    Sonnet start, scout/builder/architect subagents, Jev delegation hints and
+  lanes    Opus main (configurable), scout/builder/architect subagents, Jev delegation hints and
            the lane_guard cost guards (expired-cache reload warning, cheaper subagents, context-size note)
 
 The report joins sessions to Claude Code transcripts for exact per-request token
@@ -214,7 +214,7 @@ def settings_json(mode: str, config: dict | None = None) -> dict:
                        + (" --mode auto" if mode == "auto" else "")},
     }
     guards = (config or lane.load_config()).get("guards") or {}
-    if mode == "auto" and guards.get("subagent_model"):
+    if mode == "auto" and (guards.get("subagent_model") or guards.get("explore_model")):
         settings["hooks"]["PreToolUse"] = [{"matcher": "Agent|Task", "hooks": [
             {"type": "command", "command": f"{command} pretool", "timeout": 5}]}]
     user = _user_statusline()
@@ -278,7 +278,9 @@ def plan_launch(args: list[str], config: dict, cwd: str, rng: random.Random | No
         session = str(uuid.uuid4())
         cmd += ["--session-id", session]
     if arm == "lanes":
-        model, effort = lane.choose("claude", "standard", config)
+        main = config.get("lanes_arm") or {}
+        model, effort = (main["model"], main.get("effort")) if main.get("model") else \
+            lane.choose("claude", "standard", config)
         if not manual:
             cmd += ["--model", model, "--effort", effort] if effort else ["--model", model]
         cmd += ["--agents", json.dumps(agents_json(), separators=(",", ":"))]
@@ -296,7 +298,7 @@ def plan_launch(args: list[str], config: dict, cwd: str, rng: random.Random | No
 
 
 ARM_NOTE = {"control": "your normal setup (Jev records only)",
-            "lanes": "Sonnet + scout/builder/architect + Jev hints + cost guards",
+            "lanes": "Opus main + Sonnet/Haiku helpers + Jev hints + cost guards",
             "manual": "your --model/--effort; excluded from the comparison",
             "unassigned": "resumed session from before the trial; not counted"}
 

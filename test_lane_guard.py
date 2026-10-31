@@ -131,6 +131,11 @@ class GuardTest(unittest.TestCase):
         self.assertIsNone(self.pretool({"prompt": "p", "model": "opus"}))
         self.assertIsNone(self.pretool({"prompt": "p", "subagent_type": "architect"}))
         self.assertIsNone(self.pretool({"prompt": "p", "subagent_type": "fork"}))
+        self.assertIsNone(self.pretool({"prompt": "p", "subagent_type": "Explore", "model": "sonnet"}))
+
+    def test_explore_agent_gets_haiku(self):
+        out = self.pretool({"prompt": "find the router", "subagent_type": "Explore"})
+        self.assertEqual(out["hookSpecificOutput"]["updatedInput"]["model"], "haiku")
         self.assertIsNone(self.pretool({"command": "ls"}, tool="Bash"))
 
     def test_lanes_settings_add_pretool_hook_and_delegation_prompt(self):
