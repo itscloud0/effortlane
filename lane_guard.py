@@ -5,8 +5,10 @@ reload    The first prompt after the prompt cache expired re-sends the whole his
           will cost; sending it again goes through.
 subagent  A subagent launched without its own model inherits the session's model. Give
           general-purpose subagents a cheaper default; explicit choices are kept.
+context   Above a size, the status line shows what every step re-sends and how much
+          cheaper /clear would make a new task.
 
-Both read only usage numbers and timestamps from the local transcript, never text.
+All of them read only usage numbers and timestamps, never text.
 """
 from __future__ import annotations
 
@@ -94,15 +96,11 @@ def reload_check(event: dict, config: dict, now: float | None = None) -> tuple[s
     if not last or last["tokens"] < threshold or now - last["ts"] <= last["ttl"]:
         return None
     session = lane.session_digest(str(event.get("session_id") or ""))
-    marks_path = lane.state_dir() / "guard-reload.json"
-    try:
-        marks = json.loads(marks_path.read_text())
-    except (OSError, ValueError):
-        marks = {}
+    marks_path, marks = _read_marks("guard-reload.json")
     if marks.get(session) == last["ts"]:
         return None  # warned already; the user sent it again
     marks[session] = last["ts"]
-    lane._atomic_write(marks_path, json.dumps(dict(list(marks.items())[-200:])), 0o600)
+    _write_marks(marks_path, marks)
     import lane_claude
     rates = lane_claude.rates(last["model"])
     tokens = last["tokens"]
@@ -117,6 +115,43 @@ def reload_check(event: dict, config: dict, now: float | None = None) -> tuple[s
                "- Cheapest: /clear and restate the task in a few lines.\n"
                "- /compact pays this reload once, then every later step is cheaper.")
     return message, {"tokens": tokens, "idle_s": round(now - last["ts"]), "ttl": last["ttl"]}
+
+
+def _read_marks(name: str) -> tuple[Path, dict]:
+    path = lane.state_dir() / name
+    try:
+        return path, json.loads(path.read_text())
+    except (OSError, ValueError):
+        return path, {}
+
+
+def _write_marks(path: Path, marks: dict) -> None:
+    lane._atomic_write(path, json.dumps(dict(list(marks.items())[-200:])), 0o600)
+
+
+def start_tokens(transcript: str | Path) -> int | None:
+    """Context size of a transcript's first request: what a fresh session starts with."""
+    try:
+        with open(transcript, "rb") as handle:
+            for _, raw in zip(range(400), handle):
+                if b'"usage"' in raw:
+                    usage = (json.loads(raw).get("message") or {}).get("usage") or {}
+                    return sum(usage.get(k) or 0 for k in
+                               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def context_note(event: dict, config: dict) -> str | None:
+    """Status line note for a large session: what each step re-sends, and what /clear saves."""
+    threshold = settings(config).get("context_note_tokens")
+    tokens = (event.get("context_window") or {}).get("total_input_tokens")
+    if not isinstance(threshold, int) or threshold <= 0 or not isinstance(tokens, int) or tokens < threshold:
+        return None
+    fresh = max(start_tokens(event.get("transcript_path") or "") or 40_000, 20_000)
+    return (f"effortlane: {tokens // 1000}k re-sent every step · new task? /clear starts near "
+            f"{fresh // 1000}k (~{max(2, round(tokens / fresh))}x cheaper)")
 
 
 def pretool(stdin=None, stdout=None) -> int:

@@ -79,7 +79,7 @@ trial measures what actually happens.
 
 ## Cost guards
 
-The lanes arm also turns on three guards:
+The lanes arm also turns on these guards:
 
 - **Reload warning.** Every request re-sends the whole history; the prompt cache makes
   that cheap until it expires (1 h for Claude Code subscriptions, 5 min otherwise). The
@@ -99,11 +99,23 @@ The lanes arm also turns on three guards:
   task's detail; lower is not better, at 150k the extra compactions eat the gain. Your
   own `--autocompact` wins.
 
+- **Context note.** The biggest lever on re-reading is starting unrelated work in a
+  fresh session: `/clear` drops a 300k history to the ~40k start-up load. Above 100k the
+  status line gets a second line, `effortlane: 280k re-sent every step · new task?
+  /clear starts near 40k (~7x cheaper)`. It never interrupts. Guessing "new task" from
+  the prompt was tried first and dropped: replayed on a week of real prompts, word
+  overlap flagged ordinary follow-ups ("yes!", "I don't like the graphics") far more
+  often than real topic changes, and pushes/merges were no better as a task boundary.
+
+The session also gets short cost rules: searches across more than a few files, long logs
+and test runs go to a subagent; independent tool calls go in one response; Grep, ranged
+reads and filtered output instead of whole files and full logs.
+
 Capping tool output was measured too and left out: re-reading old command output was
 under 10% of main-session cost, and a 12k-character cap would have saved about 1%.
 
 Tune or disable them in `lane.json`:
-`"guards": {"reload_tokens": 200000, "subagent_model": "haiku", "compact_window": 200000}`,
+`"guards": {"reload_tokens": 200000, "subagent_model": "haiku", "compact_window": 200000, "context_note_tokens": 150000}`,
 or `"guards": false`.
 
 ## Trial and exact metrics

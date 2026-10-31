@@ -91,6 +91,25 @@ class GuardTest(unittest.TestCase):
         with mock.patch.object(lane, "decide", return_value=lane.Route("standard", ["jev"], "jev")):
             self.assertEqual(self.prompt(), "")
 
+    # --- context note --------------------------------------------------------------
+
+    def status(self, tokens, mode="auto"):
+        self.write([request("a", time.time() - 600, write=40_000)])
+        event = {"session_id": "s1", "transcript_path": str(self.transcript),
+                 "context_window": {"total_input_tokens": tokens}}
+        out = io.StringIO()
+        lane_claude.statusline(io.StringIO(json.dumps(event)), out, mode=mode)
+        return out.getvalue()
+
+    def test_status_line_shows_context_note_in_large_lanes_sessions(self):
+        self.assertEqual(self.status(280_000),
+                         "effortlane: 280k re-sent every step · new task? /clear starts near 40k (~7x cheaper)")
+        self.assertEqual(self.status(80_000), "")
+        self.assertEqual(self.status(280_000, mode="shadow"), "")  # control arm: untouched
+        command = lane_claude.settings_json("auto", lane.load_config())["statusLine"]["command"]
+        self.assertTrue(command.endswith("statusline --mode auto"))
+        self.assertTrue(lane_claude.settings_json("shadow")["statusLine"]["command"].endswith("statusline"))
+
     # --- subagent guard --------------------------------------------------------------
 
     def pretool(self, tool_input, tool="Agent"):

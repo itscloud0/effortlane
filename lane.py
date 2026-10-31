@@ -66,7 +66,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Claude Code prompt hook: add a one-line delegation hint for light and deep prompts.
     "hints": True,
     # Lanes-arm cost guards (lane_guard.py, lane_claude.py); "guards": false turns them off.
-    "guards": {"reload_tokens": 120_000, "subagent_model": "sonnet", "compact_window": 300_000},
+    "guards": {"reload_tokens": 120_000, "subagent_model": "sonnet", "compact_window": 300_000,
+               "context_note_tokens": 100_000},
 }
 CODEX_ROLES = ("luna", "terra", "sol", "astra")
 
@@ -782,7 +783,7 @@ def main(argv: list[str] | None = None) -> int:
         return lane_guard.pretool()
     if argv[:1] == ["statusline"]:
         import lane_claude
-        return lane_claude.statusline()
+        return lane_claude.statusline(mode="auto" if argv[1:] == ["--mode", "auto"] else "shadow")
     native: list[str] = []
     if "--" in argv:
         split = argv.index("--")

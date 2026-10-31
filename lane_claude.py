@@ -7,7 +7,7 @@ which execs the real Claude Code with the lane harness injected through its own
 Trial arms, assigned per new session:
   control  your normal Claude setup; Jev only records what it would pick
   lanes    Sonnet start, scout/builder/architect subagents, Jev delegation hints and
-           the lane_guard cost guards (expired-cache reload warning, cheaper subagents)
+           the lane_guard cost guards (expired-cache reload warning, cheaper subagents, context-size note)
 
 The report joins sessions to Claude Code transcripts for exact per-request token
 usage (subagents included), prices it per model, and adds the account 5h/7d limit
@@ -191,10 +191,16 @@ def agents_json() -> dict:
     return result
 
 
-DELEGATION = ("Cost rules from Effortlane: delegate with a short self-contained brief to a fresh "
-              "subagent rather than forking this conversation, since a fork copies the whole history. "
+DELEGATION = ("Cost rules from Effortlane. Every step re-sends this whole conversation, so keep "
+              "it small and take fewer steps. "
+              "1) Searches that would read more than about three files, long logs, test runs and doc "
+              "lookups go to a subagent (scout for read-only search) with a short self-contained brief; "
+              "keep only its summary here. Delegate rather than fork: a fork copies the whole history. "
               "Set the subagent model explicitly: haiku for lookups, sonnet for routine edits, opus "
-              "only for hard debugging or design.")
+              "only for hard debugging or design. "
+              "2) Put independent tool calls in one response instead of one per step. "
+              "3) Prefer Grep and Glob to reading whole files, Read with offset and limit for large "
+              "files, and filter long command output (tail, grep) before it lands here.")
 
 
 def settings_json(mode: str, config: dict | None = None) -> dict:
@@ -204,7 +210,8 @@ def settings_json(mode: str, config: dict | None = None) -> dict:
         hook["async"] = True  # recording only: never delay the prompt
     settings: dict[str, Any] = {
         "hooks": {"UserPromptSubmit": [{"hooks": [hook]}]},
-        "statusLine": {"type": "command", "command": f"{command} statusline"},
+        "statusLine": {"type": "command", "command": f"{command} statusline"
+                       + (" --mode auto" if mode == "auto" else "")},
     }
     guards = (config or lane.load_config()).get("guards") or {}
     if mode == "auto" and guards.get("subagent_model"):
@@ -333,12 +340,17 @@ def _num(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def statusline(stdin=None, stdout=None) -> int:
-    """Record cost and limit counters when they change, then render the user's own status line."""
+def statusline(stdin=None, stdout=None, mode: str = "shadow") -> int:
+    """Record cost and limit counters when they change, then render the user's own status line;
+    the lanes arm adds a line about context size once a session is large."""
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     raw = stdin.read()
+    note = None
     try:
         event = json.loads(raw)
+        if mode == "auto":
+            import lane_guard
+            note = lane_guard.context_note(event, lane.load_config())
         session = event.get("session_id")
         if isinstance(session, str) and session:
             cost = event.get("cost") or {}
@@ -373,6 +385,8 @@ def statusline(stdin=None, stdout=None) -> int:
             stdout.write(result.stdout)
         except (OSError, subprocess.SubprocessError):
             pass
+    if note:
+        stdout.write(("\n" if command else "") + note)
     return 0
 
 

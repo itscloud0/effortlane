@@ -14,7 +14,7 @@ Python standard library only. No dependency install.
 
 Map: `lane.py` (Jev lanes for Claude/Codex/Hermes, see docs/LANES.md) · `lane_claude.py`
 (seamless `claude` wrapper, control-vs-lanes trial, transcript-based usage report) · `lane_guard.py` (lanes-arm cost guards:
-expired-cache reload warning, cheaper generic subagents) · `lane_xray.py` (`lane xray` token breakdown) ·
+expired-cache reload warning, cheaper generic subagents, context-size note) · `lane_xray.py` (`lane xray` token breakdown) ·
 `core.py` (Codex routing policy, sanitizer, Jev client) · `manage.py` (Codex
 installer and CLI) · `rpc_adapter.py`/`cli_bridge.py`/`transport.py` (Codex app-server
 bridge) · `claude_shadow.py` (observe-only Claude hooks) · `metrics.py`/`trials.py`.
